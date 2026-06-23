@@ -16,6 +16,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.yourname.tolladvisor",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -24,6 +25,19 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Toll Advisor needs your location to alert you at the toll decision point."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "0c913e0c-61b7-4af5-8c2b-1e873f7b7a93"
+      }
     }
   }
 }
