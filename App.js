@@ -147,28 +147,58 @@ async function geocodeAddress(address, googleKey) {
 }
 
 async function getRoutes(originLat, originLng, destination, googleKey) {
-  const body = {
-    origin: { location: { latLng: { latitude: originLat, longitude: originLng } } },
+  // Make two explicit requests:
+  // 1. Default (fastest) route — likely uses the toll road
+  // 2. Avoid-tolls route — forces Google to find the free alternative
+  // This is more reliable than computeAlternativeRoutes, which may return
+  // multiple toll routes without ever surfacing the free option.
+  const baseBody = {
+    origin:      { location: { latLng: { latitude: originLat, longitude: originLng } } },
     destination: { address: destination },
-    travelMode: 'DRIVE',
-    computeAlternativeRoutes: true,
+    travelMode:  'DRIVE',
+    computeAlternativeRoutes: false,
     routeModifiers: { vehicleInfo: { emissionType: 'GASOLINE' } },
     routingPreference: 'TRAFFIC_AWARE',
     extraComputations: ['TOLLS'],
   };
-  const res  = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': googleKey,
-      'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.description,routes.travelAdvisory.tollInfo,routes.legs.steps.navigationInstruction,routes.routeLabels',
-    },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (data.error) throw new Error('Routes API: ' + (data.error.message || JSON.stringify(data.error)));
-  if (!data.routes || data.routes.length === 0) throw new Error('No routes found to that destination.');
-  return data.routes;
+
+  const headers = {
+    'Content-Type':      'application/json',
+    'X-Goog-Api-Key':    googleKey,
+    'X-Goog-FieldMask':  'routes.duration,routes.distanceMeters,routes.description,routes.travelAdvisory.tollInfo,routes.legs.steps.startLocation,routes.legs.steps.navigationInstruction,routes.routeLabels',
+  };
+
+  const [tollRes, freeRes] = await Promise.all([
+    fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+      method: 'POST', headers,
+      body: JSON.stringify(baseBody),
+    }),
+    fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+      method: 'POST', headers,
+      body: JSON.stringify({ ...baseBody, routeModifiers: { ...baseBody.routeModifiers, avoidTolls: true } }),
+    }),
+  ]);
+
+  const [tollData, freeData] = await Promise.all([tollRes.json(), freeRes.json()]);
+
+  if (tollData.error) throw new Error('Routes API: ' + (tollData.error.message || JSON.stringify(tollData.error)));
+
+  const routes = [];
+  if (tollData.routes?.length) routes.push(...tollData.routes);
+
+  // Only add the avoid-tolls route if it actually differs from the toll route
+  // (sometimes they're identical when no toll road exists on the route at all)
+  if (freeData.routes?.length) {
+    const freeRoute   = freeData.routes[0];
+    const tollRoute   = tollData.routes?.[0];
+    const sameRoute   = tollRoute && Math.abs(
+      parseInt(freeRoute.duration) - parseInt(tollRoute.duration)
+    ) < 30; // within 30 seconds = effectively same route
+    if (!sameRoute) routes.push(freeRoute);
+  }
+
+  if (routes.length === 0) throw new Error('No routes found to that destination.');
+  return routes;
 }
 
 // ── Route selection & verdict ──────────────────────────────────────────────
@@ -265,20 +295,68 @@ function calculateVerdict(selected, minTimeSaved, maxToll) {
 }
 
 // ── Decision point extraction ──────────────────────────────────────────────
-// Uses the start of the second navigation step — typically the first
-// junction where toll and free roads diverge.
-function getDecisionPoint(route, originLat, originLng) {
-  try {
-    const steps = route.legs?.[0]?.steps;
-    if (steps && steps.length >= 2) {
-      const step = steps[1];
-      const loc  = step.startLocation?.latLng ?? step.navigationInstruction?.startLocation?.latLng;
+// Finds where the toll route and free route diverge by comparing step
+// coordinates. The last point where both routes are still within 200m of
+// each other is the decision point — the last moment the driver can still
+// choose either road. Falls back to the toll route's second step if only
+// one route is available, or to a small offset from origin as a last resort.
+
+function haversineMetres(lat1, lng1, lat2, lng2) {
+  const R   = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a   = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
+            * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function extractStepLocations(route) {
+  const steps = route?.legs?.[0]?.steps ?? [];
+  return steps
+    .map(step => step.startLocation?.latLng ?? null)
+    .filter(Boolean);
+}
+
+function getDecisionPoint(tollRoute, freeRoute, originLat, originLng) {
+  // If we have both routes, find where they diverge
+  if (tollRoute && freeRoute) {
+    const tollPts = extractStepLocations(tollRoute);
+    const freePts = extractStepLocations(freeRoute);
+
+    if (tollPts.length > 0 && freePts.length > 0) {
+      // For each toll step, find the closest free step.
+      // Walk forward until the closest free step is more than 200m away —
+      // that's the divergence. Use the toll step just before it.
+      let lastSharedTollPt = tollPts[0];
+
+      for (const tollPt of tollPts) {
+        const closestFreeDist = Math.min(
+          ...freePts.map(fp =>
+            haversineMetres(tollPt.latitude, tollPt.longitude, fp.latitude, fp.longitude)
+          )
+        );
+        if (closestFreeDist > 200) break; // routes have diverged
+        lastSharedTollPt = tollPt;
+      }
+
+      return { latitude: lastSharedTollPt.latitude, longitude: lastSharedTollPt.longitude };
+    }
+  }
+
+  // Single route available — use its second step (first real maneuver)
+  const singleRoute = tollRoute ?? freeRoute;
+  if (singleRoute) {
+    const steps = singleRoute?.legs?.[0]?.steps ?? [];
+    if (steps.length >= 2) {
+      const loc = steps[1].startLocation?.latLng;
       if (loc?.latitude && loc?.longitude) {
         return { latitude: loc.latitude, longitude: loc.longitude };
       }
     }
-  } catch {}
-  // Fallback: use a point slightly offset from origin as a test trigger
+  }
+
+  // Last resort: small offset from origin so geofence still arms
   return { latitude: originLat + 0.005, longitude: originLng + 0.005 };
 }
 
@@ -577,7 +655,7 @@ export default function App() {
     try {
       const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
       if (bgStatus === 'granted') {
-        const decisionPt = getDecisionPoint(v.tollRoute ?? v.freeRoute, originLat, originLng);
+        const decisionPt = getDecisionPoint(v.tollRoute, v.freeRoute, originLat, originLng);
         await Location.startGeofencingAsync(GEOFENCE_TASK, [{
           latitude:      decisionPt.latitude,
           longitude:     decisionPt.longitude,
