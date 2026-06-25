@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   StyleSheet, Text, View, TextInput, TouchableOpacity,
   ScrollView, ActivityIndicator, SafeAreaView, Platform,
@@ -536,6 +536,17 @@ export default function App() {
 
   const setStep = useCallback((n, state) => {
     setStepStates(prev => ({ ...prev, [n]: state }));
+  }, []);
+
+  useEffect(() => {
+    async function requestStartupPermissions() {
+      const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+      if (fgStatus === 'granted') {
+        await Location.requestBackgroundPermissionsAsync();
+      }
+      await Notifications.requestPermissionsAsync();
+    }
+    requestStartupPermissions();
   }, []);
 
   async function detectLocation() {
