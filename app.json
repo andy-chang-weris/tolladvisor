@@ -17,6 +17,13 @@
     },
     "android": {
       "package": "com.yourname.tolladvisor",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -30,7 +37,16 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Toll Advisor needs your location to alert you at the toll decision point."
+          "locationAlwaysAndWhenInUsePermission": "Toll Advisor needs background location to notify you at toll decision points while you drive.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#111318"
         }
       ]
     ],
