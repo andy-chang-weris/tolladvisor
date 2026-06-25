@@ -711,6 +711,21 @@ export default function App() {
       const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
       if (bgStatus === 'granted') {
         const decisionPt = getDecisionPoint(v.tollRoute, v.freeRoute, originLat, originLng);
+
+        // ── Decision point debug log ───────────────────────────────────────
+        // Logs the coords chosen as the decision point so you can paste them
+        // into Google Maps to verify the location makes sense without driving.
+        // Also logs how many polyline points were decoded from each route.
+        const tollPtCount = v.tollRoute?.polyline?.encodedPolyline
+          ? decodePolyline(v.tollRoute.polyline.encodedPolyline).length : 0;
+        const freePtCount = v.freeRoute?.polyline?.encodedPolyline
+          ? decodePolyline(v.freeRoute.polyline.encodedPolyline).length : 0;
+        console.log('[DecisionPoint] lat:', decisionPt.latitude, 'lng:', decisionPt.longitude);
+        console.log('[DecisionPoint] Google Maps link: https://www.google.com/maps?q=' + decisionPt.latitude + ',' + decisionPt.longitude);
+        console.log('[DecisionPoint] Toll polyline points decoded:', tollPtCount);
+        console.log('[DecisionPoint] Free polyline points decoded:', freePtCount);
+        // ──────────────────────────────────────────────────────────────────
+
         await Location.startGeofencingAsync(GEOFENCE_TASK, [{
           latitude:      decisionPt.latitude,
           longitude:     decisionPt.longitude,
