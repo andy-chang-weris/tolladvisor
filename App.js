@@ -4,6 +4,7 @@ import {
   ScrollView, ActivityIndicator, SafeAreaView, Platform,
   StatusBar, KeyboardAvoidingView,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
@@ -643,6 +644,31 @@ export default function App() {
     }
     requestStartupPermissions();
   }, []);
+
+  // ── Load persisted settings on startup ──
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const saved = await AsyncStorage.getItem('settings');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.googleKey)      setGoogleKey(parsed.googleKey);
+          if (parsed.minTimeSaved)   setMinTimeSaved(parsed.minTimeSaved);
+          if (parsed.maxToll)        setMaxToll(parsed.maxToll);
+          if (parsed.valuePerMinute) setValuePerMinute(parsed.valuePerMinute);
+          if (parsed.tollPass)       setTollPass(parsed.tollPass);
+        }
+      } catch {}
+    }
+    loadSettings();
+  }, []);
+
+  // ── Persist settings whenever they change ──
+  useEffect(() => {
+    AsyncStorage.setItem('settings', JSON.stringify({
+      googleKey, minTimeSaved, maxToll, valuePerMinute, tollPass,
+    })).catch(() => {});
+  }, [googleKey, minTimeSaved, maxToll, valuePerMinute, tollPass]);
 
   async function detectLocation() {
     setLocationText('Detecting...');
