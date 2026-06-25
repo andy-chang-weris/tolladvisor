@@ -20,8 +20,6 @@ Notifications.setNotificationHandler({
 // ── Geofence task ──────────────────────────────────────────────────────────
 const GEOFENCE_TASK = 'TOLL_DECISION_POINT';
 
-// Module-level store so the background task can access trip data without
-// React state (which is unavailable in a headless background context).
 let _tripContext = null;
 
 TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
@@ -31,10 +29,10 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   if (eventType !== Location.GeofencingEventType.Enter) return;
   if (!_tripContext) return;
 
-  const { googleKey, destination, minTimeSaved, maxToll, valuePerMinute } = _tripContext;
+  const { googleKey, destination, minTimeSaved, maxToll, valuePerMinute, tollPass } = _tripContext;
   try {
     const pos      = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-    const routes   = await getRoutes(pos.coords.latitude, pos.coords.longitude, destination, googleKey);
+    const routes   = await getRoutes(pos.coords.latitude, pos.coords.longitude, destination, googleKey, tollPass);
     const selected = selectRoutes(routes);
     const verdict  = calculateVerdict(selected, minTimeSaved, maxToll, valuePerMinute ?? 2);
     if (!verdict) return;
@@ -67,6 +65,38 @@ const C = {
   blue:    '#3b82f6',
   blueD:   'rgba(59,130,246,0.10)',
 };
+
+// ── Toll pass options (Google Routes API TollPass enum values) ─────────────
+// Source: https://developers.google.com/maps/documentation/routes/calculate_toll_fees
+const TOLL_PASS_OPTIONS = [
+  // E-ZPass states
+  { label: 'E-ZPass (DE)',  value: 'US_DE_EZPASSDE' },
+  { label: 'E-ZPass (IL)',  value: 'US_IL_EZPASS' },
+  { label: 'E-ZPass (IN)',  value: 'US_IN_EZPASS' },
+  { label: 'E-ZPass (KY)',  value: 'US_KY_RIVERLINK' },
+  { label: 'E-ZPass (MA)',  value: 'US_MA_EZPASSMA' },
+  { label: 'E-ZPass (MD)',  value: 'US_MD_EZPASSMD' },
+  { label: 'E-ZPass (ME)',  value: 'US_ME_EZPASSME' },
+  { label: 'E-ZPass (MN)',  value: 'US_MN_EZPASSMN' },
+  { label: 'E-ZPass (NC)',  value: 'US_NC_QUICK_PASS' },
+  { label: 'E-ZPass (NH)',  value: 'US_NH_EZPASS' },
+  { label: 'E-ZPass (NJ)',  value: 'US_NJ_DOWNBEACH_EXPRESS_PASS' },
+  { label: 'E-ZPass (NY)',  value: 'US_NY_EZPASSNY' },
+  { label: 'E-ZPass (OH)',  value: 'US_OH_EZPASS' },
+  { label: 'E-ZPass (PA)',  value: 'US_PA_EZPASS' },
+  { label: 'E-ZPass (RI)',  value: 'US_RI_EZPASS' },
+  { label: 'E-ZPass (VA)',  value: 'US_VA_EZPASS' },
+  { label: 'E-ZPass (WV)',  value: 'US_WV_EZPASS' },
+  // Other US passes
+  { label: 'FasTrak (CA)',        value: 'US_CA_FASTRAK' },
+  { label: 'ExpressToll (CO)',     value: 'US_CO_EXPRESSTOLL' },
+  { label: 'SunPass (FL)',         value: 'US_FL_SUNPASS' },
+  { label: 'Peach Pass (GA)',      value: 'US_GA_NAVIGATOR' },
+  { label: 'K-TAG (KS)',           value: 'US_KS_KTAG' },
+  { label: 'LeeWay (FL)',          value: 'US_FL_LEEWAY' },
+  { label: 'TxTag (TX)',           value: 'US_TX_TXTAG' },
+  { label: 'Good To Go! (WA)',     value: 'US_WA_GOOD_TO_GO' },
+];
 
 // ── Pure helpers ───────────────────────────────────────────────────────────
 function fmtDuration(sec) {
@@ -146,13 +176,21 @@ async function geocodeAddress(address, googleKey) {
   return { lat: loc.lat, lng: loc.lng };
 }
 
-async function getRoutes(originLat, originLng, destination, googleKey) {
+// tollPass: a TollPass enum string (e.g. 'US_NY_EZPASSNY') or 'none'
+async function getRoutes(originLat, originLng, destination, googleKey, tollPass = 'none') {
+  const tollPassArray = tollPass && tollPass !== 'none' ? [tollPass] : [];
+
+  const baseRouteModifiers = {
+    vehicleInfo: { emissionType: 'GASOLINE' },
+    ...(tollPassArray.length > 0 && { tollPasses: tollPassArray }),
+  };
+
   const baseBody = {
     origin:      { location: { latLng: { latitude: originLat, longitude: originLng } } },
     destination: { address: destination },
     travelMode:  'DRIVE',
     computeAlternativeRoutes: false,
-    routeModifiers: { vehicleInfo: { emissionType: 'GASOLINE' } },
+    routeModifiers: baseRouteModifiers,
     routingPreference: 'TRAFFIC_AWARE',
     extraComputations: ['TOLLS'],
   };
@@ -170,7 +208,10 @@ async function getRoutes(originLat, originLng, destination, googleKey) {
     }),
     fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
       method: 'POST', headers,
-      body: JSON.stringify({ ...baseBody, routeModifiers: { ...baseBody.routeModifiers, avoidTolls: true } }),
+      body: JSON.stringify({
+        ...baseBody,
+        routeModifiers: { ...baseRouteModifiers, avoidTolls: true },
+      }),
     }),
   ]);
 
@@ -418,6 +459,59 @@ function CardTitle({ children }) {
   return <Text style={s.cardTitle}>{children}</Text>;
 }
 
+// ── TollPassPicker ─────────────────────────────────────────────────────────
+// Toggle + scrollable list of pass options. Shows only when enabled.
+function TollPassPicker({ value, onChange }) {
+  const enabled = value !== 'none';
+  const selectedLabel = TOLL_PASS_OPTIONS.find(o => o.value === value)?.label ?? 'Select pass';
+
+  function toggle() {
+    onChange(enabled ? 'none' : TOLL_PASS_OPTIONS[0].value);
+  }
+
+  return (
+    <View>
+      {/* Toggle row */}
+      <View style={s.toggleRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.toggleLabel}>Toll pass / transponder</Text>
+          <Text style={s.toggleSub}>
+            {enabled ? 'Pass pricing active' : 'Cash pricing (default)'}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={[s.toggleBtn, enabled && s.toggleBtnOn]}
+          onPress={toggle}
+          activeOpacity={0.8}
+        >
+          <View style={[s.toggleThumb, enabled && s.toggleThumbOn]} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Pass selector — only shown when enabled */}
+      {enabled && (
+        <View style={s.passGrid}>
+          {TOLL_PASS_OPTIONS.map(opt => {
+            const active = opt.value === value;
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[s.passChip, active && s.passChipActive]}
+                onPress={() => onChange(opt.value)}
+                activeOpacity={0.7}
+              >
+                <Text style={[s.passChipText, active && s.passChipTextActive]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
+
 function StepPill({ state }) {
   const color  = state === 'running' ? C.amber : state === 'done' ? C.green : state === 'error' ? C.red : C.muted;
   const border = state === 'running' ? 'rgba(245,158,11,0.3)' : state === 'done' ? 'rgba(34,197,94,0.3)' : state === 'error' ? 'rgba(239,68,68,0.3)' : C.border;
@@ -518,6 +612,7 @@ export default function App() {
   const [minTimeSaved,     setMinTimeSaved]     = useState('10');
   const [maxToll,          setMaxToll]          = useState('10');
   const [valuePerMinute,   setValuePerMinute]   = useState('2');
+  const [tollPass,         setTollPass]         = useState('none'); // 'none' or a TollPass enum string
 
   const [locationText,     setLocationText]     = useState('');
   const [locationMode,     setLocationMode]     = useState('manual');
@@ -606,7 +701,6 @@ export default function App() {
     const maxTollNum        = parseFloat(maxToll) || 10;
     const valuePerMinuteNum = parseFloat(valuePerMinute) || 2;
 
-    // Resolve coordinates — GPS if detected, geocode if typed manually
     let originLat = currentLat;
     let originLng = currentLng;
     if (locationMode === 'manual' || !originLat) {
@@ -652,7 +746,7 @@ export default function App() {
     setStep(2, 'running');
     let selectedRoutes;
     try {
-      const routes = await getRoutes(originLat, originLng, destination, googleKey);
+      const routes = await getRoutes(originLat, originLng, destination, googleKey, tollPass);
       selectedRoutes = selectRoutes(routes);
 
       const list = [];
@@ -688,12 +782,15 @@ export default function App() {
     setVerdict(v);
     setStep(3, 'done');
 
-    // Send pre-trip advisory notification
     const sent = await sendVerdictNotification(v, destination);
     setNotificationSent(sent);
 
-    // Arm geofence at the decision point
-    _tripContext = { googleKey, destination, minTimeSaved: minTimeSavedNum, maxToll: maxTollNum, valuePerMinute: valuePerMinuteNum };
+    // Arm geofence — include tollPass so the background task uses the same pricing
+    _tripContext = {
+      googleKey, destination,
+      minTimeSaved: minTimeSavedNum, maxToll: maxTollNum,
+      valuePerMinute: valuePerMinuteNum, tollPass,
+    };
     try {
       const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
       if (bgStatus === 'granted') {
@@ -768,6 +865,10 @@ export default function App() {
             <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="10" />
             <Label>Value of your time ($ per minute saved)</Label>
             <FieldInput value={valuePerMinute} onChangeText={setValuePerMinute} keyboardType="numeric" placeholder="2" />
+
+            {/* ── Toll pass toggle ── */}
+            <View style={s.divider} />
+            <TollPassPicker value={tollPass} onChange={setTollPass} />
           </Card>
 
           {/* ── Pipeline ── */}
@@ -866,6 +967,24 @@ const s = StyleSheet.create({
   locRow:         { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
   locBtn:         { backgroundColor: C.border2, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center' },
   locBtnText:     { color: C.text, fontSize: 12, fontWeight: '600' },
+
+  divider:        { height: 1, backgroundColor: C.border, marginTop: 16, marginBottom: 4 },
+
+  // Toggle row
+  toggleRow:      { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
+  toggleLabel:    { fontSize: 13, color: C.text, fontWeight: '600' },
+  toggleSub:      { fontSize: 11, color: C.muted, marginTop: 2 },
+  toggleBtn:      { width: 44, height: 26, borderRadius: 13, backgroundColor: C.border2, justifyContent: 'center', paddingHorizontal: 3 },
+  toggleBtnOn:    { backgroundColor: C.green },
+  toggleThumb:    { width: 20, height: 20, borderRadius: 10, backgroundColor: C.muted },
+  toggleThumbOn:  { backgroundColor: '#000', alignSelf: 'flex-end' },
+
+  // Pass chip grid
+  passGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  passChip:       { borderWidth: 1, borderColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  passChipActive: { borderColor: C.green, backgroundColor: C.greenD },
+  passChipText:   { fontSize: 11, color: C.muted },
+  passChipTextActive: { color: C.green, fontWeight: '600' },
 
   sectionLabel:   { fontSize: 10, color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
 
