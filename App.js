@@ -750,7 +750,6 @@ export default function App() {
       <View style={s.topbar}>
         <View style={s.logoDot} />
         <Text style={s.logoText}>TOLL ADVISOR</Text>
-        <Text style={s.logoSub}>AI ROUTE INTELLIGENCE</Text>
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -760,16 +759,11 @@ export default function App() {
             <CardTitle>Configuration</CardTitle>
             <Label>Google API Key</Label>
             <FieldInput value={googleKey} onChangeText={setGoogleKey} placeholder="AIza..." secureTextEntry />
-            <Label>Destination</Label>
-            <FieldInput value={destination} onChangeText={setDestination} placeholder='e.g. 1600 Pennsylvania Ave, Washington DC' />
             <Label>Min time saved (minutes)</Label>
             <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
             <Label>Max toll willing to pay ($)</Label>
             <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="5" />
-          </Card>
-
-          <Card style={{ marginTop: 12 }}>
-            <CardTitle>Starting Location</CardTitle>
+            <Label>Starting Location</Label>
             <View style={s.locRow}>
               <View style={{ flex: 1 }}>
                 <FieldInput
@@ -782,6 +776,8 @@ export default function App() {
                 <Text style={s.locBtnText}>📍 Detect</Text>
               </TouchableOpacity>
             </View>
+            <Label>Destination</Label>
+            <FieldInput value={destination} onChangeText={setDestination} placeholder='e.g. 1600 Pennsylvania Ave, Washington DC' />
           </Card>
 
           {/* Pipeline */}
@@ -861,7 +857,7 @@ export default function App() {
 // ── Styles ─────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   safe:           { flex: 1, backgroundColor: C.black },
-  topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+  topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 28, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
   logoDot:        { width: 8, height: 8, borderRadius: 4, backgroundColor: C.green, marginBottom: 4 },
   logoText:       { fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: 2 },
   logoSub:        { fontSize: 10, color: C.muted, letterSpacing: 1.5, marginTop: 2 },
