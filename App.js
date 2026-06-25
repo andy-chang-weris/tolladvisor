@@ -165,7 +165,9 @@ async function getRoutes(originLat, originLng, destination, googleKey) {
   const headers = {
     'Content-Type':      'application/json',
     'X-Goog-Api-Key':    googleKey,
-    'X-Goog-FieldMask':  'routes.duration,routes.distanceMeters,routes.description,routes.travelAdvisory.tollInfo,routes.legs.steps.startLocation,routes.legs.steps.navigationInstruction,routes.routeLabels',
+    // CHANGE 1: added routes.polyline.encodedPolyline to FieldMask so the
+    // full encoded polyline is returned for precise divergence detection.
+    'X-Goog-FieldMask':  'routes.duration,routes.distanceMeters,routes.description,routes.travelAdvisory.tollInfo,routes.legs.steps.startLocation,routes.legs.steps.navigationInstruction,routes.routeLabels,routes.polyline.encodedPolyline',
   };
 
   const [tollRes, freeRes] = await Promise.all([
@@ -295,11 +297,45 @@ function calculateVerdict(selected, minTimeSaved, maxToll) {
 }
 
 // ── Decision point extraction ──────────────────────────────────────────────
-// Finds where the toll route and free route diverge by comparing step
-// coordinates. The last point where both routes are still within 200m of
-// each other is the decision point — the last moment the driver can still
-// choose either road. Falls back to the toll route's second step if only
-// one route is available, or to a small offset from origin as a last resort.
+// CHANGE 2: Added decodePolyline() — converts a Google encoded polyline string
+// into hundreds of dense lat/lng points along the actual road geometry.
+// This replaces the sparse step-based approach (one point per maneuver) with
+// a dense point-by-point comparison for far more precise divergence detection.
+// Algorithm: https://developers.google.com/maps/documentation/utilities/polylinealgorithm
+
+function decodePolyline(encoded) {
+  const points = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < encoded.length) {
+    let shift = 0;
+    let result = 0;
+    let byte;
+    do {
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    const deltaLat = (result & 1) ? ~(result >> 1) : (result >> 1);
+    lat += deltaLat;
+
+    shift = 0;
+    result = 0;
+    do {
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    const deltaLng = (result & 1) ? ~(result >> 1) : (result >> 1);
+    lng += deltaLng;
+
+    points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
+  }
+
+  return points;
+}
 
 function haversineMetres(lat1, lng1, lat2, lng2) {
   const R   = 6371000;
@@ -311,36 +347,55 @@ function haversineMetres(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function extractStepLocations(route) {
-  const steps = route?.legs?.[0]?.steps ?? [];
-  return steps
-    .map(step => step.startLocation?.latLng ?? null)
-    .filter(Boolean);
-}
+// CHANGE 3: Replaced extractStepLocations() + old getDecisionPoint() with a
+// polyline-based implementation.
+//
+// Key improvements over the previous version:
+//   - Uses decoded polyline points (dense) instead of step startLocations (sparse)
+//   - Threshold tightened from 200m to 25m — reliable now that points are dense
+//   - Added `diverged` flag so we know whether a real split was found
+//   - If routes never diverge (share same road the whole way), falls back to
+//     an early-trip point rather than silently returning the last step, which
+//     was the bug in the previous version
 
 function getDecisionPoint(tollRoute, freeRoute, originLat, originLng) {
-  // If we have both routes, find where they diverge
   if (tollRoute && freeRoute) {
-    const tollPts = extractStepLocations(tollRoute);
-    const freePts = extractStepLocations(freeRoute);
+    const tollEncoded = tollRoute.polyline?.encodedPolyline;
+    const freeEncoded = freeRoute.polyline?.encodedPolyline;
 
-    if (tollPts.length > 0 && freePts.length > 0) {
-      // For each toll step, find the closest free step.
-      // Walk forward until the closest free step is more than 200m away —
-      // that's the divergence. Use the toll step just before it.
-      let lastSharedTollPt = tollPts[0];
+    if (tollEncoded && freeEncoded) {
+      const tollPts = decodePolyline(tollEncoded);
+      const freePts = decodePolyline(freeEncoded);
 
-      for (const tollPt of tollPts) {
-        const closestFreeDist = Math.min(
-          ...freePts.map(fp =>
-            haversineMetres(tollPt.latitude, tollPt.longitude, fp.latitude, fp.longitude)
-          )
-        );
-        if (closestFreeDist > 200) break; // routes have diverged
-        lastSharedTollPt = tollPt;
+      if (tollPts.length > 0 && freePts.length > 0) {
+        const DIVERGENCE_METRES = 25; // tight threshold — reliable with dense polyline points
+        let lastSharedTollPt = tollPts[0];
+        let diverged = false;
+
+        for (const tollPt of tollPts) {
+          const closestFreeDist = Math.min(
+            ...freePts.map(fp =>
+              haversineMetres(tollPt.latitude, tollPt.longitude, fp.latitude, fp.longitude)
+            )
+          );
+          if (closestFreeDist > DIVERGENCE_METRES) {
+            diverged = true;
+            break;
+          }
+          lastSharedTollPt = tollPt;
+        }
+
+        if (diverged) {
+          return { latitude: lastSharedTollPt.latitude, longitude: lastSharedTollPt.longitude };
+        }
+
+        // Routes never diverged — no meaningful decision point exists on this trip.
+        // Return a point early in the toll route so the geofence fires near the
+        // start of the journey and the driver gets the advisory immediately.
+        if (tollPts.length >= 2) {
+          return { latitude: tollPts[1].latitude, longitude: tollPts[1].longitude };
+        }
       }
-
-      return { latitude: lastSharedTollPt.latitude, longitude: lastSharedTollPt.longitude };
     }
   }
 
@@ -554,8 +609,8 @@ export default function App() {
 
   async function runAnalysis() {
     setError('');
-    if (!googleKey)          { setError('Google API key is required.'); return; }
-    if (!destination)        { setError('Please enter a destination address.'); return; }
+    if (!googleKey)           { setError('Google API key is required.'); return; }
+    if (!destination)         { setError('Please enter a destination address.'); return; }
     if (!locationText.trim()) { setError('Please enter or detect a starting location.'); return; }
 
     setAnalysing(true);
@@ -683,54 +738,35 @@ export default function App() {
         <Text style={s.logoSub}>AI ROUTE INTELLIGENCE</Text>
       </View>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView style={s.scroll} contentContainerStyle={s.container} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
 
-          {/* API Key */}
           <Card>
-            <CardTitle>API Keys</CardTitle>
+            <CardTitle>Configuration</CardTitle>
             <Label>Google API Key</Label>
             <FieldInput value={googleKey} onChangeText={setGoogleKey} placeholder="AIza..." secureTextEntry />
+            <Label>Destination</Label>
+            <FieldInput value={destination} onChangeText={setDestination} placeholder='e.g. 1600 Pennsylvania Ave, Washington DC' />
+            <Label>Min time saved (minutes)</Label>
+            <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
+            <Label>Max toll willing to pay ($)</Label>
+            <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="5" />
           </Card>
 
-          {/* Driver Profile */}
-          <Card>
-            <CardTitle>Driver Profile</CardTitle>
-            <View style={s.row}>
-              <View style={{ flex: 1, marginRight: 8 }}>
-                <Label>Min time saved (mins)</Label>
-                <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
-              </View>
+          <Card style={{ marginTop: 12 }}>
+            <CardTitle>Starting Location</CardTitle>
+            <View style={s.locRow}>
               <View style={{ flex: 1 }}>
-                <Label>Max toll ($)</Label>
-                <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="5" />
+                <FieldInput
+                  value={locationText}
+                  onChangeText={t => { setLocationText(t); setLocationMode('manual'); }}
+                  placeholder='e.g. 1600 Pennsylvania Ave, Washington DC'
+                />
               </View>
+              <TouchableOpacity style={s.locBtn} onPress={detectLocation} activeOpacity={0.8}>
+                <Text style={s.locBtnText}>📍 Detect</Text>
+              </TouchableOpacity>
             </View>
-          </Card>
-
-          {/* Journey */}
-          <Card>
-            <CardTitle>Journey</CardTitle>
-            <Label>Starting location</Label>
-            <FieldInput
-              value={locationText}
-              onChangeText={(text) => {
-                setLocationText(text);
-                setLocationMode('manual');
-                setCurrentLat(null);
-                setCurrentLng(null);
-              }}
-              placeholder="Address or tap detect below"
-            />
-            <TouchableOpacity style={s.ghostBtn} onPress={detectLocation} activeOpacity={0.7}>
-              <Text style={s.ghostBtnText}>⟳ Detect my location</Text>
-            </TouchableOpacity>
-            <Label>Destination address</Label>
-            <FieldInput
-              value={destination}
-              onChangeText={setDestination}
-              placeholder="e.g. 1600 Pennsylvania Ave, Washington DC"
-            />
           </Card>
 
           {/* Pipeline */}
@@ -794,15 +830,13 @@ export default function App() {
               activeOpacity={0.8}
             >
               {analysing
-                ? <ActivityIndicator color={C.green} size="small" />
-                : <Text style={s.primaryBtnText}>→ Analyse route</Text>
+                ? <ActivityIndicator color="#000" />
+                : <Text style={s.primaryBtnText}>Analyse Route</Text>
               }
-            </TouchableOpacity>
-            <TouchableOpacity style={s.ghostBtn} onPress={resetAll} activeOpacity={0.7}>
-              <Text style={s.ghostBtnText}>Reset</Text>
             </TouchableOpacity>
           </View>
 
+          <View style={{ height: 40 }} />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -811,41 +845,45 @@ export default function App() {
 
 // ── Styles ─────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  safe:       { flex: 1, backgroundColor: C.dark },
-  scroll:     { flex: 1, backgroundColor: C.black },
-  container:  { padding: 16, paddingBottom: 60 },
+  safe:           { flex: 1, backgroundColor: C.black },
+  topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+  logoDot:        { width: 8, height: 8, borderRadius: 4, backgroundColor: C.green, marginBottom: 4 },
+  logoText:       { fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: 2 },
+  logoSub:        { fontSize: 10, color: C.muted, letterSpacing: 1.5, marginTop: 2 },
 
-  topbar:     { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.dark },
-  logoDot:    { width: 10, height: 10, borderRadius: 5, backgroundColor: C.green },
-  logoText:   { fontSize: 13, fontWeight: '700', color: C.text, letterSpacing: 1 },
-  logoSub:    { marginLeft: 'auto', fontSize: 9, color: C.muted, letterSpacing: 1.5 },
+  scroll:         { flex: 1 },
+  scrollContent:  { padding: 16 },
 
-  card:       { backgroundColor: C.panel, borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 16, marginBottom: 12 },
-  cardTitle:  { fontSize: 13, fontWeight: '600', color: C.text, marginBottom: 12 },
+  card:           { backgroundColor: C.panel, borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 16, marginBottom: 12 },
+  cardTitle:      { fontSize: 11, fontWeight: '700', color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 14 },
 
-  label:         { fontSize: 10, color: C.muted, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 5, marginTop: 10 },
-  input:         { backgroundColor: 'rgba(0,0,0,0.3)', borderWidth: 1, borderColor: C.border2, borderRadius: 8, paddingHorizontal: 11, paddingVertical: 9, color: C.text, fontSize: 13 },
-  inputFocused:  { borderColor: C.green },
-  inputDisabled: { color: C.muted },
-  row:           { flexDirection: 'row', marginTop: 4 },
+  label:          { fontSize: 11, color: C.muted, marginBottom: 6, marginTop: 10, letterSpacing: 0.5 },
+  input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13 },
+  inputFocused:   { borderColor: C.border2 },
+  inputDisabled:  { opacity: 0.5 },
 
-  sectionLabel: { fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: 2, marginBottom: 10, marginTop: 4 },
+  locRow:         { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
+  locBtn:         { backgroundColor: C.border2, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center' },
+  locBtnText:     { color: C.text, fontSize: 12, fontWeight: '600' },
 
-  step:         { backgroundColor: C.panel, borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 14 },
-  stepRow:      { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  stepIcon:     { width: 28, height: 28, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center' },
-  stepIconText: { fontSize: 11, fontWeight: '700', color: C.muted },
-  stepTitle:    { fontSize: 13, fontWeight: '500', color: C.text, flex: 1 },
-  stepBody:     { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border },
-  pill:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, borderWidth: 1, borderColor: C.border },
-  pillText:     { fontSize: 10, letterSpacing: 1, textTransform: 'uppercase' },
-  connector:    { width: 1, height: 18, backgroundColor: C.border, alignSelf: 'center', marginVertical: 2 },
+  sectionLabel:   { fontSize: 10, color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
 
-  roadBadge:     { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start', marginBottom: 6 },
-  roadDot:       { width: 7, height: 7, borderRadius: 4, backgroundColor: C.green },
-  roadBadgeText: { fontSize: 12, color: C.text },
-  roadFormatted: { fontSize: 12, color: C.muted, marginTop: 2 },
-  roadMethod:    { fontSize: 10, color: C.muted, opacity: 0.7, marginTop: 3 },
+  step:           { backgroundColor: C.panel, borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 2 },
+  stepRow:        { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  stepIcon:       { width: 32, height: 32, borderRadius: 8, backgroundColor: C.black, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
+  stepIconText:   { fontSize: 10, fontWeight: '700', color: C.muted },
+  stepTitle:      { flex: 1, fontSize: 13, fontWeight: '600', color: C.text },
+  stepBody:       { marginTop: 12 },
+  pill:           { borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  pillText:       { fontSize: 9, fontWeight: '600', letterSpacing: 0.5 },
+
+  connector:      { width: 1, height: 16, backgroundColor: C.border, marginLeft: 30, marginVertical: 1 },
+
+  roadBadge:      { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start', marginBottom: 6 },
+  roadDot:        { width: 7, height: 7, borderRadius: 4, backgroundColor: C.green },
+  roadBadgeText:  { fontSize: 12, color: C.text },
+  roadFormatted:  { fontSize: 12, color: C.muted, marginTop: 2 },
+  roadMethod:     { fontSize: 10, color: C.muted, opacity: 0.7, marginTop: 3 },
 
   routesGrid:     { flexDirection: 'row', gap: 8 },
   routeCard:      { flex: 1, borderWidth: 1, borderRadius: 10, padding: 10 },
@@ -861,23 +899,21 @@ const s = StyleSheet.create({
   verdictLabel:     { fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
   verdictText:      { fontSize: 13, color: C.text, lineHeight: 20, marginBottom: 12 },
   verdictStats:     { flexDirection: 'row', gap: 6 },
-  verdictStat:      { flex: 1, alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 6, paddingVertical: 8 },
-  verdictStatNum:   { fontSize: 20, fontWeight: '700' },
-  verdictStatLabel: { fontSize: 9, color: C.muted, letterSpacing: 1, marginTop: 2 },
+  verdictStat:      { flex: 1, alignItems: 'center', backgroundColor: C.black, borderRadius: 8, padding: 10 },
+  verdictStatNum:   { fontSize: 20, fontWeight: '800', marginBottom: 4 },
+  verdictStatLabel: { fontSize: 9, color: C.muted, letterSpacing: 1 },
 
-  notifBar:    { backgroundColor: C.greenD, borderWidth: 1, borderColor: C.greenB, borderRadius: 8, padding: 10, marginTop: 10, alignItems: 'center' },
-  notifText:   { fontSize: 12, color: C.green },
+  notifBar:       { backgroundColor: 'rgba(34,197,94,0.1)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.3)', borderRadius: 8, padding: 12, marginTop: 12 },
+  notifText:      { fontSize: 12, color: C.green, textAlign: 'center' },
 
-  geofenceBar:  { backgroundColor: C.amberD, borderWidth: 1, borderColor: 'rgba(245,158,11,0.25)', borderRadius: 8, padding: 10, marginTop: 8 },
-  geofenceText: { fontSize: 12, color: C.amber, textAlign: 'center' },
+  geofenceBar:    { backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.3)', borderRadius: 8, padding: 12, marginTop: 8 },
+  geofenceText:   { fontSize: 12, color: C.blue, textAlign: 'center' },
 
-  errorBar:   { backgroundColor: C.redD, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)', borderRadius: 8, padding: 12, marginTop: 12 },
-  errorText:  { fontSize: 13, color: '#fca5a5' },
+  errorBar:       { backgroundColor: C.redD, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)', borderRadius: 8, padding: 12, marginTop: 12 },
+  errorText:      { fontSize: 12, color: C.red },
 
-  btnRow:         { flexDirection: 'row', gap: 10, marginTop: 20, justifyContent: 'center' },
-  primaryBtn:     { backgroundColor: C.greenD, borderWidth: 1, borderColor: 'rgba(34,197,94,0.4)', borderRadius: 8, paddingHorizontal: 24, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', minWidth: 140 },
-  primaryBtnText: { color: C.green, fontSize: 13, fontWeight: '600' },
-  ghostBtn:       { backgroundColor: 'transparent', borderWidth: 1, borderColor: C.border2, borderRadius: 8, paddingHorizontal: 20, paddingVertical: 9, alignItems: 'center', justifyContent: 'center' },
-  ghostBtnText:   { color: C.muted, fontSize: 13 },
-  btnDisabled:    { opacity: 0.35 },
+  btnRow:         { marginTop: 16 },
+  primaryBtn:     { backgroundColor: C.green, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#000', letterSpacing: 0.5 },
+  btnDisabled:    { opacity: 0.5 },
 });
