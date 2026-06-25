@@ -31,12 +31,12 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   if (eventType !== Location.GeofencingEventType.Enter) return;
   if (!_tripContext) return;
 
-  const { googleKey, destination, minTimeSaved, maxToll } = _tripContext;
+  const { googleKey, destination, minTimeSaved, maxToll, valuePerMinute } = _tripContext;
   try {
     const pos      = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
     const routes   = await getRoutes(pos.coords.latitude, pos.coords.longitude, destination, googleKey);
     const selected = selectRoutes(routes);
-    const verdict  = calculateVerdict(selected, minTimeSaved, maxToll);
+    const verdict  = calculateVerdict(selected, minTimeSaved, maxToll, valuePerMinute ?? 2);
     if (!verdict) return;
     const { title, body } = buildNotificationContent(verdict, destination);
     await Notifications.scheduleNotificationAsync({
@@ -147,11 +147,6 @@ async function geocodeAddress(address, googleKey) {
 }
 
 async function getRoutes(originLat, originLng, destination, googleKey) {
-  // Make two explicit requests:
-  // 1. Default (fastest) route — likely uses the toll road
-  // 2. Avoid-tolls route — forces Google to find the free alternative
-  // This is more reliable than computeAlternativeRoutes, which may return
-  // multiple toll routes without ever surfacing the free option.
   const baseBody = {
     origin:      { location: { latLng: { latitude: originLat, longitude: originLng } } },
     destination: { address: destination },
@@ -165,8 +160,6 @@ async function getRoutes(originLat, originLng, destination, googleKey) {
   const headers = {
     'Content-Type':      'application/json',
     'X-Goog-Api-Key':    googleKey,
-    // CHANGE 1: added routes.polyline.encodedPolyline to FieldMask so the
-    // full encoded polyline is returned for precise divergence detection.
     'X-Goog-FieldMask':  'routes.duration,routes.distanceMeters,routes.description,routes.travelAdvisory.tollInfo,routes.legs.steps.startLocation,routes.legs.steps.navigationInstruction,routes.routeLabels,routes.polyline.encodedPolyline',
   };
 
@@ -188,14 +181,12 @@ async function getRoutes(originLat, originLng, destination, googleKey) {
   const routes = [];
   if (tollData.routes?.length) routes.push(...tollData.routes);
 
-  // Only add the avoid-tolls route if it actually differs from the toll route
-  // (sometimes they're identical when no toll road exists on the route at all)
   if (freeData.routes?.length) {
     const freeRoute   = freeData.routes[0];
     const tollRoute   = tollData.routes?.[0];
     const sameRoute   = tollRoute && Math.abs(
       parseInt(freeRoute.duration) - parseInt(tollRoute.duration)
-    ) < 30; // within 30 seconds = effectively same route
+    ) < 30;
     if (!sameRoute) routes.push(freeRoute);
   }
 
@@ -216,14 +207,14 @@ function selectRoutes(routes) {
   return { tollRoute, freeRoute, tollRoutes, freeRoutes };
 }
 
-function calculateVerdict(selected, minTimeSaved, maxToll) {
+function calculateVerdict(selected, minTimeSaved, maxToll, valuePerMinute = 2) {
   let { tollRoute, freeRoute } = selected;
   if (!tollRoute && !freeRoute) return null;
 
   if (!tollRoute) {
     return {
       tollRoute: null, freeRoute,
-      timeSavedMin: 0, tollCost: 0,
+      timeSavedMin: 0, tollCost: 0, worthToPay: 0,
       recommendation: 'SKIP_TOLL',
       reason: `No toll routes available — the free route (${fmtDuration(parseInt(freeRoute.duration))}) is your only option.`,
     };
@@ -239,7 +230,7 @@ function calculateVerdict(selected, minTimeSaved, maxToll) {
     if (!altRoute) {
       return {
         tollRoute, freeRoute: null,
-        timeSavedMin: 0, tollCost: cheapCost,
+        timeSavedMin: 0, tollCost: cheapCost, worthToPay: 0,
         recommendation: 'TAKE_TOLL',
         reason: `Every route to this destination has a toll. The only option is $${cheapCost.toFixed(2)} (${fmtDuration(parseInt(tollRoute.duration))}).`,
       };
@@ -254,7 +245,7 @@ function calculateVerdict(selected, minTimeSaved, maxToll) {
     if (timeSavedMin <= 0) {
       return {
         tollRoute, freeRoute: altRoute,
-        timeSavedMin: 0, tollCost: cheapCost,
+        timeSavedMin: 0, tollCost: cheapCost, worthToPay: 0,
         recommendation: 'TAKE_TOLL',
         reason: `Every route has a toll. The cheapest option ($${cheapCost.toFixed(2)}, ${fmtDuration(cheapDurSec)}) is also the fastest — take it.`,
       };
@@ -262,14 +253,14 @@ function calculateVerdict(selected, minTimeSaved, maxToll) {
     if (costDiff > 0 && timeSavedMin >= minTimeSaved) {
       return {
         tollRoute: altRoute, freeRoute: tollRoute,
-        timeSavedMin, tollCost: altCost,
+        timeSavedMin, tollCost: altCost, worthToPay: timeSavedMin * valuePerMinute,
         recommendation: 'TAKE_TOLL',
         reason: `Every route has a toll. The faster route saves ${timeSavedMin} min for $${costDiff.toFixed(2)} more — worth it based on your time threshold.`,
       };
     }
     return {
       tollRoute, freeRoute: altRoute,
-      timeSavedMin, tollCost: cheapCost,
+      timeSavedMin, tollCost: cheapCost, worthToPay: timeSavedMin * valuePerMinute,
       recommendation: 'TAKE_TOLL',
       reason: `Every route has a toll. The faster route only saves ${timeSavedMin} min for $${costDiff.toFixed(2)} more — take the cheaper option ($${cheapCost.toFixed(2)}).`,
     };
@@ -279,30 +270,27 @@ function calculateVerdict(selected, minTimeSaved, maxToll) {
   const freeDurSec   = parseInt(freeRoute.duration);
   const timeSavedMin = Math.round((freeDurSec - tollDurSec) / 60);
   const tollCost     = getTollCost(tollRoute);
+  const worthToPay   = timeSavedMin * valuePerMinute;
   let recommendation = 'SKIP_TOLL';
   let reason         = '';
 
   if (timeSavedMin <= 0) {
     reason = `The toll route isn't faster (saves ${timeSavedMin} min) — no reason to pay $${tollCost.toFixed(2)}. Take the free route.`;
   } else if (tollCost > maxToll) {
-    reason = `Toll cost ($${tollCost.toFixed(2)}) exceeds your maximum of $${maxToll.toFixed(2)}. Take the free route.`;
+    reason = `Toll ($${tollCost.toFixed(2)}) exceeds your hard limit of $${maxToll.toFixed(2)}. Take the free route.`;
+  } else if (tollCost > worthToPay) {
+    reason = `Toll ($${tollCost.toFixed(2)}) costs more than the ${timeSavedMin} min saved is worth to you ($${worthToPay.toFixed(2)} at $${valuePerMinute}/min). Take the free route.`;
   } else if (timeSavedMin < minTimeSaved) {
-    reason = `Only saves ${timeSavedMin} min for $${tollCost.toFixed(2)} — below your ${minTimeSaved}-min threshold. Take the free route.`;
+    reason = `Only saves ${timeSavedMin} min — below your ${minTimeSaved}-min threshold. Not worth $${tollCost.toFixed(2)}. Take the free route.`;
   } else {
     recommendation = 'TAKE_TOLL';
-    reason = `Saves ${timeSavedMin} min for $${tollCost.toFixed(2)} — worth it based on your preferences. Take the toll road.`;
+    reason = `Saves ${timeSavedMin} min worth $${worthToPay.toFixed(2)} to you; toll is only $${tollCost.toFixed(2)}. Take the toll road.`;
   }
 
-  return { tollRoute, freeRoute, timeSavedMin, tollCost, recommendation, reason };
+  return { tollRoute, freeRoute, timeSavedMin, tollCost, worthToPay, recommendation, reason };
 }
 
 // ── Decision point extraction ──────────────────────────────────────────────
-// CHANGE 2: Added decodePolyline() — converts a Google encoded polyline string
-// into hundreds of dense lat/lng points along the actual road geometry.
-// This replaces the sparse step-based approach (one point per maneuver) with
-// a dense point-by-point comparison for far more precise divergence detection.
-// Algorithm: https://developers.google.com/maps/documentation/utilities/polylinealgorithm
-
 function decodePolyline(encoded) {
   const points = [];
   let index = 0;
@@ -347,17 +335,6 @@ function haversineMetres(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// CHANGE 3: Replaced extractStepLocations() + old getDecisionPoint() with a
-// polyline-based implementation.
-//
-// Key improvements over the previous version:
-//   - Uses decoded polyline points (dense) instead of step startLocations (sparse)
-//   - Threshold tightened from 200m to 25m — reliable now that points are dense
-//   - Added `diverged` flag so we know whether a real split was found
-//   - If routes never diverge (share same road the whole way), falls back to
-//     an early-trip point rather than silently returning the last step, which
-//     was the bug in the previous version
-
 function getDecisionPoint(tollRoute, freeRoute, originLat, originLng) {
   if (tollRoute && freeRoute) {
     const tollEncoded = tollRoute.polyline?.encodedPolyline;
@@ -368,7 +345,7 @@ function getDecisionPoint(tollRoute, freeRoute, originLat, originLng) {
       const freePts = decodePolyline(freeEncoded);
 
       if (tollPts.length > 0 && freePts.length > 0) {
-        const DIVERGENCE_METRES = 25; // tight threshold — reliable with dense polyline points
+        const DIVERGENCE_METRES = 25;
         let lastSharedTollPt = tollPts[0];
         let diverged = false;
 
@@ -389,9 +366,6 @@ function getDecisionPoint(tollRoute, freeRoute, originLat, originLng) {
           return { latitude: lastSharedTollPt.latitude, longitude: lastSharedTollPt.longitude };
         }
 
-        // Routes never diverged — no meaningful decision point exists on this trip.
-        // Return a point early in the toll route so the geofence fires near the
-        // start of the journey and the driver gets the advisory immediately.
         if (tollPts.length >= 2) {
           return { latitude: tollPts[1].latitude, longitude: tollPts[1].longitude };
         }
@@ -399,7 +373,6 @@ function getDecisionPoint(tollRoute, freeRoute, originLat, originLng) {
     }
   }
 
-  // Single route available — use its second step (first real maneuver)
   const singleRoute = tollRoute ?? freeRoute;
   if (singleRoute) {
     const steps = singleRoute?.legs?.[0]?.steps ?? [];
@@ -411,7 +384,6 @@ function getDecisionPoint(tollRoute, freeRoute, originLat, originLng) {
     }
   }
 
-  // Last resort: small offset from origin so geofence still arms
   return { latitude: originLat + 0.005, longitude: originLng + 0.005 };
 }
 
@@ -511,6 +483,8 @@ function VerdictCard({ verdict }) {
   const bg          = take ? C.greenD : C.blueD;
   const border      = take ? C.greenB : 'rgba(59,130,246,0.25)';
   const accentColor = take ? C.green  : C.blue;
+  const delta       = (verdict.worthToPay ?? 0) - verdict.tollCost;
+  const deltaColor  = delta >= 0 ? C.green : C.red;
   return (
     <View style={[s.verdictCard, { backgroundColor: bg, borderColor: border }]}>
       <Text style={[s.verdictLabel, { color: accentColor }]}>
@@ -527,10 +501,10 @@ function VerdictCard({ verdict }) {
           <Text style={s.verdictStatLabel}>TOLL COST</Text>
         </View>
         <View style={s.verdictStat}>
-          <Text style={[s.verdictStatNum, { color: C.text }]}>
-            {verdict.tollCost > 0 ? (verdict.timeSavedMin / verdict.tollCost).toFixed(1) : '—'}
+          <Text style={[s.verdictStatNum, { color: deltaColor }]}>
+            {delta >= 0 ? '+' : ''}${delta.toFixed(2)}
           </Text>
-          <Text style={s.verdictStatLabel}>MINS / $</Text>
+          <Text style={s.verdictStatLabel}>VALUE DELTA</Text>
         </View>
       </View>
     </View>
@@ -542,7 +516,8 @@ export default function App() {
   const [googleKey,        setGoogleKey]        = useState('');
   const [destination,      setDestination]      = useState('');
   const [minTimeSaved,     setMinTimeSaved]     = useState('10');
-  const [maxToll,          setMaxToll]          = useState('5');
+  const [maxToll,          setMaxToll]          = useState('10');
+  const [valuePerMinute,   setValuePerMinute]   = useState('2');
 
   const [locationText,     setLocationText]     = useState('');
   const [locationMode,     setLocationMode]     = useState('manual');
@@ -616,8 +591,9 @@ export default function App() {
     setAnalysing(true);
     resetAll();
 
-    const minTimeSavedNum = parseInt(minTimeSaved) || 10;
-    const maxTollNum      = parseFloat(maxToll) || 5;
+    const minTimeSavedNum   = parseInt(minTimeSaved) || 10;
+    const maxTollNum        = parseFloat(maxToll) || 10;
+    const valuePerMinuteNum = parseFloat(valuePerMinute) || 2;
 
     // Resolve coordinates — GPS if detected, geocode if typed manually
     let originLat = currentLat;
@@ -691,7 +667,7 @@ export default function App() {
 
     // ── Step 3: verdict ──
     setStep(3, 'running');
-    const v = calculateVerdict(selectedRoutes, minTimeSavedNum, maxTollNum);
+    const v = calculateVerdict(selectedRoutes, minTimeSavedNum, maxTollNum, valuePerMinuteNum);
     if (!v) {
       setStep(3, 'error');
       setError('Step 3 — could not determine routes.');
@@ -706,16 +682,12 @@ export default function App() {
     setNotificationSent(sent);
 
     // Arm geofence at the decision point
-    _tripContext = { googleKey, destination, minTimeSaved: minTimeSavedNum, maxToll: maxTollNum };
+    _tripContext = { googleKey, destination, minTimeSaved: minTimeSavedNum, maxToll: maxTollNum, valuePerMinute: valuePerMinuteNum };
     try {
       const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
       if (bgStatus === 'granted') {
         const decisionPt = getDecisionPoint(v.tollRoute, v.freeRoute, originLat, originLng);
 
-        // ── Decision point debug log ───────────────────────────────────────
-        // Logs the coords chosen as the decision point so you can paste them
-        // into Google Maps to verify the location makes sense without driving.
-        // Also logs how many polyline points were decoded from each route.
         const tollPtCount = v.tollRoute?.polyline?.encodedPolyline
           ? decodePolyline(v.tollRoute.polyline.encodedPolyline).length : 0;
         const freePtCount = v.freeRoute?.polyline?.encodedPolyline
@@ -724,7 +696,6 @@ export default function App() {
         console.log('[DecisionPoint] Google Maps link: https://www.google.com/maps?q=' + decisionPt.latitude + ',' + decisionPt.longitude);
         console.log('[DecisionPoint] Toll polyline points decoded:', tollPtCount);
         console.log('[DecisionPoint] Free polyline points decoded:', freePtCount);
-        // ──────────────────────────────────────────────────────────────────
 
         await Location.startGeofencingAsync(GEOFENCE_TASK, [{
           latitude:      decisionPt.latitude,
@@ -755,14 +726,9 @@ export default function App() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
 
+          {/* ── Route card ── */}
           <Card>
-            <CardTitle>Configuration</CardTitle>
-            <Label>Google API Key</Label>
-            <FieldInput value={googleKey} onChangeText={setGoogleKey} placeholder="AIza..." secureTextEntry />
-            <Label>Min time saved (minutes)</Label>
-            <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
-            <Label>Max toll willing to pay ($)</Label>
-            <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="5" />
+            <CardTitle>Route</CardTitle>
             <Label>Starting Location</Label>
             <View style={s.locRow}>
               <View style={{ flex: 1 }}>
@@ -780,7 +746,20 @@ export default function App() {
             <FieldInput value={destination} onChangeText={setDestination} placeholder='e.g. 1600 Pennsylvania Ave, Washington DC' />
           </Card>
 
-          {/* Pipeline */}
+          {/* ── Configuration card ── */}
+          <Card>
+            <CardTitle>Configuration</CardTitle>
+            <Label>Google API Key</Label>
+            <FieldInput value={googleKey} onChangeText={setGoogleKey} placeholder="AIza..." secureTextEntry />
+            <Label>Min time saved (minutes)</Label>
+            <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
+            <Label>Max toll willing to pay ($)</Label>
+            <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="10" />
+            <Label>Value of your time ($ per minute saved)</Label>
+            <FieldInput value={valuePerMinute} onChangeText={setValuePerMinute} keyboardType="numeric" placeholder="2" />
+          </Card>
+
+          {/* ── Pipeline ── */}
           <Text style={s.sectionLabel}>Analysis Pipeline</Text>
 
           <StepCard num={1} title="Identify current road" state={stepStates[1]}>
@@ -857,7 +836,7 @@ export default function App() {
 // ── Styles ─────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   safe:           { flex: 1, backgroundColor: C.black },
-  topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 28, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+  topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 36, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
   logoDot:        { width: 8, height: 8, borderRadius: 4, backgroundColor: C.green, marginBottom: 4 },
   logoText:       { fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: 2 },
   logoSub:        { fontSize: 10, color: C.muted, letterSpacing: 1.5, marginTop: 2 },
