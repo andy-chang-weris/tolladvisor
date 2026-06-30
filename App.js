@@ -30,16 +30,16 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   if (eventType !== Location.GeofencingEventType.Enter) return;
   if (!_tripContext) return;
 
-  const { googleKey, destination, minTimeSaved, maxToll, valuePerMinute, tollPass } = _tripContext;
+  const { googleKey, destination, minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass } = _tripContext;
   try {
     const pos      = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
     const routes   = await getRoutes(pos.coords.latitude, pos.coords.longitude, destination, googleKey, tollPass);
     const selected = selectRoutes(routes);
-    const verdict  = calculateVerdict(selected, minTimeSaved, maxToll, valuePerMinute ?? 2);
+    const verdict  = calculateVerdict(selected, minTimeSaved, maxToll, annualSalary, urgencyLevel);
     if (!verdict) return;
     const { title, body } = buildNotificationContent(verdict, destination);
     await Notifications.scheduleNotificationAsync({
-      content: { title: '📍 Decision point ahead — ' + title, body, sound: true },
+      content: { title: '📍 Decision point ahead: ' + title, body, sound: true },
       trigger: null,
     });
   } catch (err) {
@@ -178,6 +178,42 @@ const TOLL_PASS_OPTIONS = [
   { label: 'MOV Pass (WV)',         value: 'US_WV_MOV_PASS' },
   { label: 'Newell Bridge (WV)',    value: 'US_WV_NEWELL_TOLL_BRIDGE_TICKET' },
 ];
+
+// ── Urgency levels ──────────────────────────────────────────────────────────
+// Each level carries a weight that multiplies the dollar value of travel time
+// saved. Higher urgency means your time is worth more on this specific trip,
+// so the toll clears the cost-effectiveness bar more easily.
+const URGENCY_OPTIONS = [
+  { label: 'Low',    value: 'low',  weight: 0.5 },
+  { label: 'Medium', value: 'med',  weight: 1.0 },
+  { label: 'High',   value: 'high', weight: 1.5 },
+];
+
+function urgencyWeight(level) {
+  return URGENCY_OPTIONS.find(o => o.value === level)?.weight ?? 1.0;
+}
+
+// Fraction of the hourly wage counted as the value of travel time saved.
+// 0.5 is the "x 50%" in the (salary / 2000) x 50% rule.
+const VOT_FRACTION = 0.5;
+
+// Annual work hours assumed when converting a yearly salary to an hourly figure
+// (about 40 hours/week x 50 weeks). This is the "2000" in salary / 2000.
+const ANNUAL_WORK_HOURS = 2000;
+
+// Dollar value of the time saved on a trip, based on yearly salary and urgency.
+//   annualSalary : user's gross yearly salary in dollars
+//   timeSavedMin : minutes saved by taking the toll route
+//   urgencyLevel : 'low' | 'med' | 'high'
+// value per hour = (annualSalary / 2000) x 50% x urgencyWeight
+// Worked example: salary 100000, med urgency, 18 min (0.3 hr) saved
+//   -> (100000 / 2000) x 0.5 x 1.0 = $25/hr -> 0.3 x 25 = $7.50
+function valueOfTimeSaved(timeSavedMin, annualSalary, urgencyLevel) {
+  const salary     = Number(annualSalary) || 0;
+  const hourlyWage = salary / ANNUAL_WORK_HOURS;
+  const perHour    = hourlyWage * VOT_FRACTION * urgencyWeight(urgencyLevel);
+  return (timeSavedMin / 60) * perHour;
+}
 
 // ── Pure helpers ───────────────────────────────────────────────────────────
 function fmtDuration(sec) {
@@ -329,7 +365,13 @@ function selectRoutes(routes) {
   return { tollRoute, freeRoute, tollRoutes, freeRoutes };
 }
 
-function calculateVerdict(selected, minTimeSaved, maxToll, valuePerMinute = 2) {
+// Verdict logic:
+//   1. If the toll route is not faster, skip.
+//   2. Test 1 (hard cap): if the toll exceeds the max you'll pay, skip.
+//   3. Test 2 (cost-effectiveness): if the toll costs more than the time saved
+//      is worth to you (salary + urgency derived), skip; otherwise consider taking.
+//   4. The minimum-time-saved threshold acts as a final gate.
+function calculateVerdict(selected, minTimeSaved, maxToll, annualSalary, urgencyLevel) {
   let { tollRoute, freeRoute } = selected;
   if (!tollRoute && !freeRoute) return null;
 
@@ -338,7 +380,7 @@ function calculateVerdict(selected, minTimeSaved, maxToll, valuePerMinute = 2) {
       tollRoute: null, freeRoute,
       timeSavedMin: 0, tollCost: 0, worthToPay: 0,
       recommendation: 'SKIP_TOLL',
-      reason: `No toll routes available — the free route (${fmtDuration(parseInt(freeRoute.duration))}) is your only option.`,
+      reason: `No toll routes available. The free route (${fmtDuration(parseInt(freeRoute.duration))}) is your only option.`,
     };
   }
 
@@ -369,22 +411,22 @@ function calculateVerdict(selected, minTimeSaved, maxToll, valuePerMinute = 2) {
         tollRoute, freeRoute: altRoute,
         timeSavedMin: 0, tollCost: cheapCost, worthToPay: 0,
         recommendation: 'TAKE_TOLL',
-        reason: `Every route has a toll. The cheapest option ($${cheapCost.toFixed(2)}, ${fmtDuration(cheapDurSec)}) is also the fastest — take it.`,
+        reason: `Every route has a toll. The cheapest option ($${cheapCost.toFixed(2)}, ${fmtDuration(cheapDurSec)}) is also the fastest, so take it.`,
       };
     }
     if (costDiff > 0 && timeSavedMin >= minTimeSaved) {
       return {
         tollRoute: altRoute, freeRoute: tollRoute,
-        timeSavedMin, tollCost: altCost, worthToPay: timeSavedMin * valuePerMinute,
+        timeSavedMin, tollCost: altCost, worthToPay: valueOfTimeSaved(timeSavedMin, annualSalary, urgencyLevel),
         recommendation: 'TAKE_TOLL',
-        reason: `Every route has a toll. The faster route saves ${timeSavedMin} min for $${costDiff.toFixed(2)} more — worth it based on your time threshold.`,
+        reason: `Every route has a toll. The faster route saves ${timeSavedMin} min for $${costDiff.toFixed(2)} more, which is worth it based on your time threshold.`,
       };
     }
     return {
       tollRoute, freeRoute: altRoute,
-      timeSavedMin, tollCost: cheapCost, worthToPay: timeSavedMin * valuePerMinute,
+      timeSavedMin, tollCost: cheapCost, worthToPay: valueOfTimeSaved(timeSavedMin, annualSalary, urgencyLevel),
       recommendation: 'TAKE_TOLL',
-      reason: `Every route has a toll. The faster route only saves ${timeSavedMin} min for $${costDiff.toFixed(2)} more — take the cheaper option ($${cheapCost.toFixed(2)}).`,
+      reason: `Every route has a toll. The faster route only saves ${timeSavedMin} min for $${costDiff.toFixed(2)} more, so take the cheaper option ($${cheapCost.toFixed(2)}).`,
     };
   }
 
@@ -392,18 +434,21 @@ function calculateVerdict(selected, minTimeSaved, maxToll, valuePerMinute = 2) {
   const freeDurSec   = parseInt(freeRoute.duration);
   const timeSavedMin = Math.round((freeDurSec - tollDurSec) / 60);
   const tollCost     = getTollCost(tollRoute);
-  const worthToPay   = timeSavedMin * valuePerMinute;
+  const weight       = urgencyWeight(urgencyLevel);
+  const worthToPay   = valueOfTimeSaved(timeSavedMin, annualSalary, urgencyLevel);
   let recommendation = 'SKIP_TOLL';
   let reason         = '';
 
   if (timeSavedMin <= 0) {
-    reason = `The toll route isn't faster (saves ${timeSavedMin} min) — no reason to pay $${tollCost.toFixed(2)}. Take the free route.`;
+    reason = `The toll route isn't faster (saves ${timeSavedMin} min), so there's no reason to pay $${tollCost.toFixed(2)}. Take the free route.`;
   } else if (tollCost > maxToll) {
+    // Test 1: hard cap on toll price.
     reason = `Toll ($${tollCost.toFixed(2)}) exceeds your hard limit of $${maxToll.toFixed(2)}. Take the free route.`;
   } else if (tollCost > worthToPay) {
-    reason = `Toll ($${tollCost.toFixed(2)}) costs more than the ${timeSavedMin} min saved is worth to you ($${worthToPay.toFixed(2)} at $${valuePerMinute}/min). Take the free route.`;
+    // Test 2: cost-effectiveness vs the salary + urgency value of time saved.
+    reason = `Toll ($${tollCost.toFixed(2)}) is more than the ${timeSavedMin} min saved is worth to you ($${worthToPay.toFixed(2)} at ${weight}x urgency). Take the free route.`;
   } else if (timeSavedMin < minTimeSaved) {
-    reason = `Only saves ${timeSavedMin} min — below your ${minTimeSaved}-min threshold. Not worth $${tollCost.toFixed(2)}. Take the free route.`;
+    reason = `Only saves ${timeSavedMin} min, below your ${minTimeSaved}-min threshold. Not worth $${tollCost.toFixed(2)}. Take the free route.`;
   } else {
     recommendation = 'TAKE_TOLL';
     reason = `Saves ${timeSavedMin} min worth $${worthToPay.toFixed(2)} to you; toll is only $${tollCost.toFixed(2)}. Take the toll road.`;
@@ -593,6 +638,40 @@ function TollPassPicker({ value, onChange }) {
   );
 }
 
+// ── UrgencyPicker ──────────────────────────────────────────────────────────
+// Three-way selector for how time-critical this trip is. The selected level's
+// weight scales the value of travel time saved in the verdict calculation.
+function UrgencyPicker({ value, onChange }) {
+  const current = URGENCY_OPTIONS.find(o => o.value === value) ?? URGENCY_OPTIONS[1];
+  return (
+    <View>
+      <View style={{ marginBottom: 2 }}>
+        <Text style={s.toggleLabel}>Trip urgency</Text>
+        <Text style={s.toggleSub}>
+          {`${current.label} · ${current.weight}x on value of time saved`}
+        </Text>
+      </View>
+      <View style={s.passGrid}>
+        {URGENCY_OPTIONS.map(opt => {
+          const active = opt.value === value;
+          return (
+            <TouchableOpacity
+              key={opt.value}
+              style={[s.passChip, active && s.passChipActive]}
+              onPress={() => onChange(opt.value)}
+              activeOpacity={0.7}
+            >
+              <Text style={[s.passChipText, active && s.passChipTextActive]}>
+                {`${opt.label} (${opt.weight}x)`}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function StepPill({ state }) {
   const color  = state === 'running' ? C.amber : state === 'done' ? C.green : state === 'error' ? C.red : C.muted;
   const border = state === 'running' ? 'rgba(245,158,11,0.3)' : state === 'done' ? 'rgba(34,197,94,0.3)' : state === 'error' ? 'rgba(239,68,68,0.3)' : C.border;
@@ -692,7 +771,8 @@ export default function App() {
   const [destination,      setDestination]      = useState('');
   const [minTimeSaved,     setMinTimeSaved]     = useState('10');
   const [maxToll,          setMaxToll]          = useState('10');
-  const [valuePerMinute,   setValuePerMinute]   = useState('2');
+  const [annualSalary,     setAnnualSalary]     = useState('');     // gross yearly salary in $
+  const [urgencyLevel,     setUrgencyLevel]     = useState('med');  // 'low' | 'med' | 'high'
   const [tollPass,         setTollPass]         = useState('none'); // 'none' or a TollPass enum string
 
   const [locationText,     setLocationText]     = useState('');
@@ -735,7 +815,8 @@ export default function App() {
           if (parsed.googleKey)      setGoogleKey(parsed.googleKey);
           if (parsed.minTimeSaved)   setMinTimeSaved(parsed.minTimeSaved);
           if (parsed.maxToll)        setMaxToll(parsed.maxToll);
-          if (parsed.valuePerMinute) setValuePerMinute(parsed.valuePerMinute);
+          if (parsed.annualSalary)   setAnnualSalary(parsed.annualSalary);
+          if (parsed.urgencyLevel)   setUrgencyLevel(parsed.urgencyLevel);
           if (parsed.tollPass)       setTollPass(parsed.tollPass);
         }
       } catch {}
@@ -746,9 +827,9 @@ export default function App() {
   // ── Persist settings whenever they change ──
   useEffect(() => {
     AsyncStorage.setItem('settings', JSON.stringify({
-      googleKey, minTimeSaved, maxToll, valuePerMinute, tollPass,
+      googleKey, minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass,
     })).catch(() => {});
-  }, [googleKey, minTimeSaved, maxToll, valuePerMinute, tollPass]);
+  }, [googleKey, minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass]);
 
   async function detectLocation() {
     setLocationText('Detecting...');
@@ -803,9 +884,9 @@ export default function App() {
     setAnalysing(true);
     resetAll();
 
-    const minTimeSavedNum   = parseInt(minTimeSaved) || 10;
-    const maxTollNum        = parseFloat(maxToll) || 10;
-    const valuePerMinuteNum = parseFloat(valuePerMinute) || 2;
+    const minTimeSavedNum = parseInt(minTimeSaved) || 10;
+    const maxTollNum      = parseFloat(maxToll) || 10;
+    const annualSalaryNum = parseFloat(annualSalary) || 0;
 
     let originLat = currentLat;
     let originLng = currentLng;
@@ -843,7 +924,7 @@ export default function App() {
       setStep(1, 'done');
     } catch (err) {
       setStep(1, 'error');
-      setError('Step 1 — ' + err.message);
+      setError('Step 1: ' + err.message);
       setAnalysing(false);
       return;
     }
@@ -871,17 +952,17 @@ export default function App() {
       setStep(2, 'done');
     } catch (err) {
       setStep(2, 'error');
-      setError('Step 2 — ' + err.message);
+      setError('Step 2: ' + err.message);
       setAnalysing(false);
       return;
     }
 
     // ── Step 3: verdict ──
     setStep(3, 'running');
-    const v = calculateVerdict(selectedRoutes, minTimeSavedNum, maxTollNum, valuePerMinuteNum);
+    const v = calculateVerdict(selectedRoutes, minTimeSavedNum, maxTollNum, annualSalaryNum, urgencyLevel);
     if (!v) {
       setStep(3, 'error');
-      setError('Step 3 — could not determine routes.');
+      setError('Step 3: could not determine routes.');
       setAnalysing(false);
       return;
     }
@@ -891,11 +972,11 @@ export default function App() {
     const sent = await sendVerdictNotification(v, destination);
     setNotificationSent(sent);
 
-    // Arm geofence — include tollPass so the background task uses the same pricing
+    // Arm geofence — include salary + urgency so the background task uses the same maths
     _tripContext = {
       googleKey, destination,
       minTimeSaved: minTimeSavedNum, maxToll: maxTollNum,
-      valuePerMinute: valuePerMinuteNum, tollPass,
+      annualSalary: annualSalaryNum, urgencyLevel, tollPass,
     };
     try {
       const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
@@ -969,8 +1050,12 @@ export default function App() {
             <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
             <Label>Max toll willing to pay ($)</Label>
             <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="10" />
-            <Label>Value of your time ($ per minute saved)</Label>
-            <FieldInput value={valuePerMinute} onChangeText={setValuePerMinute} keyboardType="numeric" placeholder="2" />
+            <Label>Your annual salary ($ per year)</Label>
+            <FieldInput value={annualSalary} onChangeText={setAnnualSalary} keyboardType="numeric" placeholder="50000" />
+
+            {/* ── Trip urgency ── */}
+            <View style={s.divider} />
+            <UrgencyPicker value={urgencyLevel} onChange={setUrgencyLevel} />
 
             {/* ── Toll pass toggle ── */}
             <View style={s.divider} />
@@ -1002,7 +1087,7 @@ export default function App() {
               ))}
             </View>
             {noFreeRoute && (
-              <Text style={s.noFreeNote}>No toll-free route exists — comparing toll options.</Text>
+              <Text style={s.noFreeNote}>No toll-free route exists, comparing toll options.</Text>
             )}
           </StepCard>
 
@@ -1020,7 +1105,7 @@ export default function App() {
 
           {geofenceArmed && (
             <View style={s.geofenceBar}>
-              <Text style={s.geofenceText}>📍 Watching for decision point — notification fires automatically as you approach</Text>
+              <Text style={s.geofenceText}>📍 Watching for decision point. Notification fires automatically as you approach</Text>
             </View>
           )}
 
