@@ -8,6 +8,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
+import {
+  URGENCY_OPTIONS,
+  fmtDuration,
+  getTollCost,
+  selectRoutes,
+  calculateVerdict,
+  decodePolyline,
+  getDecisionPoint,
+} from './src/tollLogic';
 
 // ── Notification handler ───────────────────────────────────────────────────
 Notifications.setNotificationHandler({
@@ -76,7 +85,7 @@ const TOLL_PASS_OPTIONS = [
   { label: 'e-Toll Tag (AU-SYD)',   value: 'AU_ETOLL_TAG' },
   { label: 'Eway Tag (AU-SYD)',     value: 'AU_EWAY_TAG' },
   // Argentina
-  { label: 'Telepase (AR)',         value: 'AR_TELEPASE' },
+  { label: 'Telepase (AR)',         value: 'AR_TELEPEASE' },
   // Brazil
   { label: 'Sem Parar (BR)',        value: 'BR_SEM_PARAR' },
   { label: 'ConectCar (BR)',        value: 'BR_CONECTCAR' },
@@ -178,59 +187,6 @@ const TOLL_PASS_OPTIONS = [
   { label: 'MOV Pass (WV)',         value: 'US_WV_MOV_PASS' },
   { label: 'Newell Bridge (WV)',    value: 'US_WV_NEWELL_TOLL_BRIDGE_TICKET' },
 ];
-
-// ── Urgency levels ──────────────────────────────────────────────────────────
-// Each level carries a weight that multiplies the dollar value of travel time
-// saved. Higher urgency means your time is worth more on this specific trip,
-// so the toll clears the cost-effectiveness bar more easily.
-const URGENCY_OPTIONS = [
-  { label: 'Low',    value: 'low',  weight: 0.5 },
-  { label: 'Medium', value: 'med',  weight: 1.0 },
-  { label: 'High',   value: 'high', weight: 1.5 },
-];
-
-function urgencyWeight(level) {
-  return URGENCY_OPTIONS.find(o => o.value === level)?.weight ?? 1.0;
-}
-
-// Fraction of the hourly wage counted as the value of travel time saved.
-// 0.5 is the "x 50%" in the (salary / 2000) x 50% rule.
-const VOT_FRACTION = 0.5;
-
-// Annual work hours assumed when converting a yearly salary to an hourly figure
-// (about 40 hours/week x 50 weeks). This is the "2000" in salary / 2000.
-const ANNUAL_WORK_HOURS = 2000;
-
-// Dollar value of the time saved on a trip, based on yearly salary and urgency.
-//   annualSalary : user's gross yearly salary in dollars
-//   timeSavedMin : minutes saved by taking the toll route
-//   urgencyLevel : 'low' | 'med' | 'high'
-// value per hour = (annualSalary / 2000) x 50% x urgencyWeight
-// Worked example: salary 100000, med urgency, 18 min (0.3 hr) saved
-//   -> (100000 / 2000) x 0.5 x 1.0 = $25/hr -> 0.3 x 25 = $7.50
-function valueOfTimeSaved(timeSavedMin, annualSalary, urgencyLevel) {
-  const salary     = Number(annualSalary) || 0;
-  const hourlyWage = salary / ANNUAL_WORK_HOURS;
-  const perHour    = hourlyWage * VOT_FRACTION * urgencyWeight(urgencyLevel);
-  return (timeSavedMin / 60) * perHour;
-}
-
-// ── Pure helpers ───────────────────────────────────────────────────────────
-function fmtDuration(sec) {
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m} min`;
-}
-
-function getTollCost(route) {
-  const price = route.travelAdvisory?.tollInfo?.estimatedPrice?.[0];
-  if (!price) return 0;
-  return parseFloat(price.units || 0) + (price.nanos || 0) / 1e9;
-}
-
-function routeHasToll(route) {
-  return (route.travelAdvisory?.tollInfo?.estimatedPrice?.length || 0) > 0;
-}
 
 // ── Notification helpers ───────────────────────────────────────────────────
 async function requestNotificationPermission() {
@@ -352,208 +308,6 @@ async function getRoutes(originLat, originLng, destination, googleKey, tollPass 
   return routes;
 }
 
-// ── Route selection & verdict ──────────────────────────────────────────────
-function selectRoutes(routes) {
-  const tollRoutes = routes.filter(routeHasToll);
-  const freeRoutes = routes.filter(r => !routeHasToll(r));
-  const tollRoute  = tollRoutes.length
-    ? tollRoutes.sort((a, b) => getTollCost(a) - getTollCost(b) || parseInt(a.duration) - parseInt(b.duration))[0]
-    : null;
-  const freeRoute  = freeRoutes.length
-    ? freeRoutes.sort((a, b) => parseInt(a.duration) - parseInt(b.duration))[0]
-    : null;
-  return { tollRoute, freeRoute, tollRoutes, freeRoutes };
-}
-
-// Verdict logic:
-//   1. If the toll route is not faster, skip.
-//   2. Test 1 (hard cap): if the toll exceeds the max you'll pay, skip.
-//   3. Test 2 (cost-effectiveness): if the toll costs more than the time saved
-//      is worth to you (salary + urgency derived), skip; otherwise consider taking.
-//   4. The minimum-time-saved threshold acts as a final gate.
-function calculateVerdict(selected, minTimeSaved, maxToll, annualSalary, urgencyLevel) {
-  let { tollRoute, freeRoute } = selected;
-  if (!tollRoute && !freeRoute) return null;
-
-  if (!tollRoute) {
-    return {
-      tollRoute: null, freeRoute,
-      timeSavedMin: 0, tollCost: 0, worthToPay: 0,
-      recommendation: 'SKIP_TOLL',
-      reason: `No toll routes available. The free route (${fmtDuration(parseInt(freeRoute.duration))}) is your only option.`,
-    };
-  }
-
-  if (!freeRoute) {
-    const others    = selected.tollRoutes.filter(r => r !== tollRoute);
-    const altRoute  = others.length
-      ? others.sort((a, b) => parseInt(a.duration) - parseInt(b.duration))[0]
-      : null;
-    const cheapCost = getTollCost(tollRoute);
-
-    if (!altRoute) {
-      return {
-        tollRoute, freeRoute: null,
-        timeSavedMin: 0, tollCost: cheapCost, worthToPay: 0,
-        recommendation: 'TAKE_TOLL',
-        reason: `Every route to this destination has a toll. The only option is $${cheapCost.toFixed(2)} (${fmtDuration(parseInt(tollRoute.duration))}).`,
-      };
-    }
-
-    const altCost      = getTollCost(altRoute);
-    const cheapDurSec  = parseInt(tollRoute.duration);
-    const altDurSec    = parseInt(altRoute.duration);
-    const timeSavedMin = Math.round((cheapDurSec - altDurSec) / 60);
-    const costDiff     = altCost - cheapCost;
-
-    if (timeSavedMin <= 0) {
-      return {
-        tollRoute, freeRoute: altRoute,
-        timeSavedMin: 0, tollCost: cheapCost, worthToPay: 0,
-        recommendation: 'TAKE_TOLL',
-        reason: `Every route has a toll. The cheapest option ($${cheapCost.toFixed(2)}, ${fmtDuration(cheapDurSec)}) is also the fastest, so take it.`,
-      };
-    }
-    if (costDiff > 0 && timeSavedMin >= minTimeSaved) {
-      return {
-        tollRoute: altRoute, freeRoute: tollRoute,
-        timeSavedMin, tollCost: altCost, worthToPay: valueOfTimeSaved(timeSavedMin, annualSalary, urgencyLevel),
-        recommendation: 'TAKE_TOLL',
-        reason: `Every route has a toll. The faster route saves ${timeSavedMin} min for $${costDiff.toFixed(2)} more, which is worth it based on your time threshold.`,
-      };
-    }
-    return {
-      tollRoute, freeRoute: altRoute,
-      timeSavedMin, tollCost: cheapCost, worthToPay: valueOfTimeSaved(timeSavedMin, annualSalary, urgencyLevel),
-      recommendation: 'TAKE_TOLL',
-      reason: `Every route has a toll. The faster route only saves ${timeSavedMin} min for $${costDiff.toFixed(2)} more, so take the cheaper option ($${cheapCost.toFixed(2)}).`,
-    };
-  }
-
-  const tollDurSec   = parseInt(tollRoute.duration);
-  const freeDurSec   = parseInt(freeRoute.duration);
-  const timeSavedMin = Math.round((freeDurSec - tollDurSec) / 60);
-  const tollCost     = getTollCost(tollRoute);
-  const weight       = urgencyWeight(urgencyLevel);
-  const worthToPay   = valueOfTimeSaved(timeSavedMin, annualSalary, urgencyLevel);
-  let recommendation = 'SKIP_TOLL';
-  let reason         = '';
-
-  if (timeSavedMin <= 0) {
-    reason = `The toll route isn't faster (saves ${timeSavedMin} min), so there's no reason to pay $${tollCost.toFixed(2)}. Take the free route.`;
-  } else if (tollCost > maxToll) {
-    // Test 1: hard cap on toll price.
-    reason = `Toll ($${tollCost.toFixed(2)}) exceeds your hard limit of $${maxToll.toFixed(2)}. Take the free route.`;
-  } else if (tollCost > worthToPay) {
-    // Test 2: cost-effectiveness vs the salary + urgency value of time saved.
-    reason = `Toll ($${tollCost.toFixed(2)}) is more than the ${timeSavedMin} min saved is worth to you ($${worthToPay.toFixed(2)} at ${weight}x urgency). Take the free route.`;
-  } else if (timeSavedMin < minTimeSaved) {
-    reason = `Only saves ${timeSavedMin} min, below your ${minTimeSaved}-min threshold. Not worth $${tollCost.toFixed(2)}. Take the free route.`;
-  } else {
-    recommendation = 'TAKE_TOLL';
-    reason = `Saves ${timeSavedMin} min worth $${worthToPay.toFixed(2)} to you; toll is only $${tollCost.toFixed(2)}. Take the toll road.`;
-  }
-
-  return { tollRoute, freeRoute, timeSavedMin, tollCost, worthToPay, recommendation, reason };
-}
-
-// ── Decision point extraction ──────────────────────────────────────────────
-function decodePolyline(encoded) {
-  const points = [];
-  let index = 0;
-  let lat = 0;
-  let lng = 0;
-
-  while (index < encoded.length) {
-    let shift = 0;
-    let result = 0;
-    let byte;
-    do {
-      byte = encoded.charCodeAt(index++) - 63;
-      result |= (byte & 0x1f) << shift;
-      shift += 5;
-    } while (byte >= 0x20);
-    const deltaLat = (result & 1) ? ~(result >> 1) : (result >> 1);
-    lat += deltaLat;
-
-    shift = 0;
-    result = 0;
-    do {
-      byte = encoded.charCodeAt(index++) - 63;
-      result |= (byte & 0x1f) << shift;
-      shift += 5;
-    } while (byte >= 0x20);
-    const deltaLng = (result & 1) ? ~(result >> 1) : (result >> 1);
-    lng += deltaLng;
-
-    points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
-  }
-
-  return points;
-}
-
-function haversineMetres(lat1, lng1, lat2, lng2) {
-  const R   = 6371000;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a   = Math.sin(dLat / 2) ** 2
-            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
-            * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function getDecisionPoint(tollRoute, freeRoute, originLat, originLng) {
-  if (tollRoute && freeRoute) {
-    const tollEncoded = tollRoute.polyline?.encodedPolyline;
-    const freeEncoded = freeRoute.polyline?.encodedPolyline;
-
-    if (tollEncoded && freeEncoded) {
-      const tollPts = decodePolyline(tollEncoded);
-      const freePts = decodePolyline(freeEncoded);
-
-      if (tollPts.length > 0 && freePts.length > 0) {
-        const DIVERGENCE_METRES = 25;
-        let lastSharedTollPt = tollPts[0];
-        let diverged = false;
-
-        for (const tollPt of tollPts) {
-          const closestFreeDist = Math.min(
-            ...freePts.map(fp =>
-              haversineMetres(tollPt.latitude, tollPt.longitude, fp.latitude, fp.longitude)
-            )
-          );
-          if (closestFreeDist > DIVERGENCE_METRES) {
-            diverged = true;
-            break;
-          }
-          lastSharedTollPt = tollPt;
-        }
-
-        if (diverged) {
-          return { latitude: lastSharedTollPt.latitude, longitude: lastSharedTollPt.longitude };
-        }
-
-        if (tollPts.length >= 2) {
-          return { latitude: tollPts[1].latitude, longitude: tollPts[1].longitude };
-        }
-      }
-    }
-  }
-
-  const singleRoute = tollRoute ?? freeRoute;
-  if (singleRoute) {
-    const steps = singleRoute?.legs?.[0]?.steps ?? [];
-    if (steps.length >= 2) {
-      const loc = steps[1].startLocation?.latLng;
-      if (loc?.latitude && loc?.longitude) {
-        return { latitude: loc.latitude, longitude: loc.longitude };
-      }
-    }
-  }
-
-  return { latitude: originLat + 0.005, longitude: originLng + 0.005 };
-}
-
 // ── Reusable UI components ─────────────────────────────────────────────────
 function Label({ children }) {
   return <Text style={s.label}>{children}</Text>;
@@ -589,7 +343,6 @@ function CardTitle({ children }) {
 // Toggle + scrollable list of pass options. Shows only when enabled.
 function TollPassPicker({ value, onChange }) {
   const enabled = value !== 'none';
-  const selectedLabel = TOLL_PASS_OPTIONS.find(o => o.value === value)?.label ?? 'Select pass';
 
   function toggle() {
     onChange(enabled ? 'none' : TOLL_PASS_OPTIONS[0].value);
@@ -771,9 +524,9 @@ export default function App() {
   const [destination,      setDestination]      = useState('');
   const [minTimeSaved,     setMinTimeSaved]     = useState('10');
   const [maxToll,          setMaxToll]          = useState('10');
-  const [annualSalary,     setAnnualSalary]     = useState('');     // gross yearly salary in $
-  const [urgencyLevel,     setUrgencyLevel]     = useState('med');  // 'low' | 'med' | 'high'
-  const [tollPass,         setTollPass]         = useState('none'); // 'none' or a TollPass enum string
+  const [annualSalary,     setAnnualSalary]     = useState('');
+  const [urgencyLevel,     setUrgencyLevel]     = useState('med');
+  const [tollPass,         setTollPass]         = useState('none');
 
   const [locationText,     setLocationText]     = useState('');
   const [locationMode,     setLocationMode]     = useState('manual');
@@ -805,7 +558,6 @@ export default function App() {
     requestStartupPermissions();
   }, []);
 
-  // ── Load persisted settings on startup ──
   useEffect(() => {
     async function loadSettings() {
       try {
@@ -824,7 +576,6 @@ export default function App() {
     loadSettings();
   }, []);
 
-  // ── Persist settings whenever they change ──
   useEffect(() => {
     AsyncStorage.setItem('settings', JSON.stringify({
       googleKey, minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass,
@@ -904,7 +655,6 @@ export default function App() {
       }
     }
 
-    // ── Step 1: identify current road ──
     setStep(1, 'running');
     try {
       let info;
@@ -929,7 +679,6 @@ export default function App() {
       return;
     }
 
-    // ── Step 2: fetch routes ──
     setStep(2, 'running');
     let selectedRoutes;
     try {
@@ -957,7 +706,6 @@ export default function App() {
       return;
     }
 
-    // ── Step 3: verdict ──
     setStep(3, 'running');
     const v = calculateVerdict(selectedRoutes, minTimeSavedNum, maxTollNum, annualSalaryNum, urgencyLevel);
     if (!v) {
@@ -972,12 +720,12 @@ export default function App() {
     const sent = await sendVerdictNotification(v, destination);
     setNotificationSent(sent);
 
-    // Arm geofence — include salary + urgency so the background task uses the same maths
     _tripContext = {
       googleKey, destination,
       minTimeSaved: minTimeSavedNum, maxToll: maxTollNum,
       annualSalary: annualSalaryNum, urgencyLevel, tollPass,
     };
+
     try {
       const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
       if (bgStatus === 'granted') {
@@ -987,6 +735,7 @@ export default function App() {
           ? decodePolyline(v.tollRoute.polyline.encodedPolyline).length : 0;
         const freePtCount = v.freeRoute?.polyline?.encodedPolyline
           ? decodePolyline(v.freeRoute.polyline.encodedPolyline).length : 0;
+
         console.log('[DecisionPoint] lat:', decisionPt.latitude, 'lng:', decisionPt.longitude);
         console.log('[DecisionPoint] Google Maps link: https://www.google.com/maps?q=' + decisionPt.latitude + ',' + decisionPt.longitude);
         console.log('[DecisionPoint] Toll polyline points decoded:', tollPtCount);
@@ -1008,7 +757,6 @@ export default function App() {
     setAnalysing(false);
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar barStyle="light-content" backgroundColor={C.dark} />
@@ -1021,7 +769,6 @@ export default function App() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
 
-          {/* ── Route card ── */}
           <Card>
             <CardTitle>Route</CardTitle>
             <Label>Starting Location</Label>
@@ -1041,7 +788,6 @@ export default function App() {
             <FieldInput value={destination} onChangeText={setDestination} placeholder='e.g. 1600 Pennsylvania Ave, Washington DC' />
           </Card>
 
-          {/* ── Configuration card ── */}
           <Card>
             <CardTitle>Configuration</CardTitle>
             <Label>Google API Key</Label>
@@ -1053,16 +799,13 @@ export default function App() {
             <Label>Your annual salary ($ per year)</Label>
             <FieldInput value={annualSalary} onChangeText={setAnnualSalary} keyboardType="numeric" placeholder="50000" />
 
-            {/* ── Trip urgency ── */}
             <View style={s.divider} />
             <UrgencyPicker value={urgencyLevel} onChange={setUrgencyLevel} />
 
-            {/* ── Toll pass toggle ── */}
             <View style={s.divider} />
             <TollPassPicker value={tollPass} onChange={setTollPass} />
           </Card>
 
-          {/* ── Pipeline ── */}
           <Text style={s.sectionLabel}>Analysis Pipeline</Text>
 
           <StepCard num={1} title="Identify current road" state={stepStates[1]}>
@@ -1136,7 +879,6 @@ export default function App() {
   );
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   safe:           { flex: 1, backgroundColor: C.black },
   topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 36, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
@@ -1161,7 +903,6 @@ const s = StyleSheet.create({
 
   divider:        { height: 1, backgroundColor: C.border, marginTop: 16, marginBottom: 4 },
 
-  // Toggle row
   toggleRow:      { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
   toggleLabel:    { fontSize: 13, color: C.text, fontWeight: '600' },
   toggleSub:      { fontSize: 11, color: C.muted, marginTop: 2 },
@@ -1170,7 +911,6 @@ const s = StyleSheet.create({
   toggleThumb:    { width: 20, height: 20, borderRadius: 10, backgroundColor: C.muted },
   toggleThumbOn:  { backgroundColor: '#000', alignSelf: 'flex-end' },
 
-  // Pass chip grid
   passGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   passChip:       { borderWidth: 1, borderColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
   passChipActive: { borderColor: C.green, backgroundColor: C.greenD },
