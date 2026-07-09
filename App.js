@@ -296,12 +296,7 @@ async function getRoutes(originLat, originLng, destination, googleKey, tollPass 
   if (tollData.routes?.length) routes.push(...tollData.routes);
 
   if (freeData.routes?.length) {
-    const freeRoute   = freeData.routes[0];
-    const tollRoute   = tollData.routes?.[0];
-    const sameRoute   = tollRoute && Math.abs(
-      parseInt(freeRoute.duration) - parseInt(tollRoute.duration)
-    ) < 30;
-    if (!sameRoute) routes.push(freeRoute);
+    routes.push(freeData.routes[0]);
   }
 
   if (routes.length === 0) throw new Error('No routes found to that destination.');
