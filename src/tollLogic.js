@@ -261,7 +261,47 @@ export function haversineMetres(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-export function getDecisionPoint(tollRoute, freeRoute, originLat, originLng) {
+// Finds the index of the first step whose instructions mark it as entering
+// a toll road (Google embeds a "Toll road" line in navigationInstruction.instructions
+// for the step where tolling begins). Returns -1 if no such step exists.
+function findTollEntryStepIndex(route) {
+  const steps = route?.legs?.[0]?.steps ?? [];
+  for (let i = 0; i < steps.length; i++) {
+    const instr = steps[i].navigationInstruction?.instructions || '';
+    if (/toll road/i.test(instr)) return i;
+  }
+  return -1;
+}
+
+// How many turn-by-turn steps before the actual toll-entry step to fire the
+// alert at, so the driver has time to process it and react. 1 step back is
+// the immediately-prior turn (e.g. the ramp itself); increase this if that's
+// still not enough lead time for a given route's step spacing.
+const DECISION_POINT_LEAD_STEPS = 2;
+
+function getDecisionPoint(tollRoute, freeRoute, originLat, originLng, debug = false) {
+  // Primary method: use Google's own "Toll road" instruction marker to find
+  // exactly where the toll segment begins, then back up a couple of steps
+  // for lead time. This is robust to routes that briefly diverge on local
+  // streets and later reconverge, which breaks pure polyline-proximity matching.
+  if (tollRoute) {
+    const tollEntryIdx = findTollEntryStepIndex(tollRoute);
+    if (debug) console.log(`[DecisionPoint] tollEntryStepIndex=${tollEntryIdx}`);
+
+    if (tollEntryIdx > 0) {
+      const steps = tollRoute.legs?.[0]?.steps ?? [];
+      const leadIdx = Math.max(0, tollEntryIdx - DECISION_POINT_LEAD_STEPS);
+      const leadStep = steps[leadIdx];
+      const loc = leadStep?.startLocation?.latLng;
+      if (loc) {
+        if (debug) console.log(`[DecisionPoint] Using step[${leadIdx}] (${DECISION_POINT_LEAD_STEPS} step(s) before toll entry): "${leadStep.navigationInstruction?.instructions}"`);
+        return { latitude: loc.latitude, longitude: loc.longitude };
+      }
+    }
+  }
+
+  // Fallback: old polyline-proximity method, for cases with no toll-road
+  // instruction marker (e.g. both routes tolled, or Google didn't label it).
   if (tollRoute && freeRoute) {
     const tollEncoded = tollRoute.polyline?.encodedPolyline;
     const freeEncoded = freeRoute.polyline?.encodedPolyline;
@@ -278,59 +318,37 @@ export function getDecisionPoint(tollRoute, freeRoute, originLat, originLng) {
         for (const tollPt of tollPts) {
           const closestFreeDist = Math.min(
             ...freePts.map(fp =>
-              haversineMetres(
-                tollPt.latitude,
-                tollPt.longitude,
-                fp.latitude,
-                fp.longitude
-              )
+              haversineMetres(tollPt.latitude, tollPt.longitude, fp.latitude, fp.longitude)
             )
           );
-
           if (closestFreeDist > DIVERGENCE_METRES) {
             diverged = true;
             break;
           }
-
           lastSharedTollPt = tollPt;
         }
 
         if (diverged) {
-          return {
-            latitude: lastSharedTollPt.latitude,
-            longitude: lastSharedTollPt.longitude,
-          };
+          return { latitude: lastSharedTollPt.latitude, longitude: lastSharedTollPt.longitude };
         }
 
         if (tollPts.length >= 2) {
-          return {
-            latitude: tollPts[1].latitude,
-            longitude: tollPts[1].longitude,
-          };
+          return { latitude: tollPts[1].latitude, longitude: tollPts[1].longitude };
         }
       }
     }
   }
 
   const singleRoute = tollRoute ?? freeRoute;
-
   if (singleRoute) {
     const steps = singleRoute?.legs?.[0]?.steps ?? [];
-
-    if (steps.length >= 2) {
-      const loc = steps[1].startLocation?.latLng;
-
-      if (loc?.latitude && loc?.longitude) {
-        return {
-          latitude: loc.latitude,
-          longitude: loc.longitude,
-        };
-      }
+    if (steps.length >= 2 && steps[1].startLocation?.latLng) {
+      return {
+        latitude: steps[1].startLocation.latLng.latitude,
+        longitude: steps[1].startLocation.latLng.longitude,
+      };
     }
   }
 
-  return {
-    latitude: originLat + 0.005,
-    longitude: originLng + 0.005,
-  };
+  return { latitude: originLat, longitude: originLng };
 }
