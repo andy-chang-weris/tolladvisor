@@ -206,7 +206,7 @@ export function calculateVerdict(
   };
 }
 
-export function decodePolyline(encoded) {
+function decodePolyline(encoded) {
   const points = [];
   let index = 0;
   let lat = 0;
@@ -216,48 +216,37 @@ export function decodePolyline(encoded) {
     let shift = 0;
     let result = 0;
     let byte;
-
     do {
       byte = encoded.charCodeAt(index++) - 63;
       result |= (byte & 0x1f) << shift;
       shift += 5;
     } while (byte >= 0x20);
-
-    const deltaLat = result & 1 ? ~(result >> 1) : result >> 1;
+    const deltaLat = (result & 1) ? ~(result >> 1) : (result >> 1);
     lat += deltaLat;
 
     shift = 0;
     result = 0;
-
     do {
       byte = encoded.charCodeAt(index++) - 63;
       result |= (byte & 0x1f) << shift;
       shift += 5;
     } while (byte >= 0x20);
-
-    const deltaLng = result & 1 ? ~(result >> 1) : result >> 1;
+    const deltaLng = (result & 1) ? ~(result >> 1) : (result >> 1);
     lng += deltaLng;
 
-    points.push({
-      latitude: lat / 1e5,
-      longitude: lng / 1e5,
-    });
+    points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
   }
 
   return points;
 }
 
-export function haversineMetres(lat1, lng1, lat2, lng2) {
+function haversineMetres(lat1, lng1, lat2, lng2) {
   const R = 6371000;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) ** 2;
-
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2
+          + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
+          * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
@@ -273,29 +262,93 @@ function findTollEntryStepIndex(route) {
   return -1;
 }
 
-// How many turn-by-turn steps before the actual toll-entry step to fire the
-// alert at, so the driver has time to process it and react. 1 step back is
-// the immediately-prior turn (e.g. the ramp itself); increase this if that's
-// still not enough lead time for a given route's step spacing.
-const DECISION_POINT_LEAD_STEPS = 2;
+// Fixed lead distance, in metres, to back off from the actual ramp/turn
+// before firing the alert. Distance-based rather than step-based, since
+// turn-by-turn steps vary wildly in length (a highway "continue straight"
+// step can be miles long, a local turn a few hundred feet), so counting
+// steps back is not a reliable proxy for how much reaction distance the
+// driver actually gets.
+const DECISION_POINT_LEAD_METRES = 800; // ~0.5 mile
+
+// Index of the polyline point nearest a given lat/lng.
+function nearestPolylineIndex(pts, lat, lng) {
+  let bestIdx = 0;
+  let bestDist = Infinity;
+  pts.forEach((p, i) => {
+    const d = haversineMetres(lat, lng, p.latitude, p.longitude);
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  });
+  return bestIdx;
+}
+
+// Linear interpolation between two lat/lng points, at fraction t (0 = a, 1 = b).
+// Fine for short segments (a few hundred metres) where the earth's curvature
+// is negligible; not meant for long-distance interpolation.
+function interpolatePoint(a, b, t) {
+  return {
+    latitude:  a.latitude  + (b.latitude  - a.latitude)  * t,
+    longitude: a.longitude + (b.longitude - a.longitude) * t,
+  };
+}
+
+// Walk backward along the polyline from targetIdx, accumulating real
+// point-to-point distance, and interpolate the exact point once leadMetres
+// is reached (rather than snapping to whichever polyline point happens to
+// be nearby, which can overshoot badly on long straight stretches with
+// sparse points).
+function walkBackByDistance(pts, targetIdx, leadMetres) {
+  let accumulated = 0;
+  let idx = targetIdx;
+
+  while (idx > 0) {
+    const segMetres = haversineMetres(
+      pts[idx].latitude, pts[idx].longitude,
+      pts[idx - 1].latitude, pts[idx - 1].longitude
+    );
+
+    if (accumulated + segMetres >= leadMetres) {
+      const remaining = leadMetres - accumulated;
+      const t = remaining / segMetres;
+      const point = interpolatePoint(pts[idx], pts[idx - 1], t);
+      return { point, actualMetresBack: leadMetres, ranOutOfRoute: false };
+    }
+
+    accumulated += segMetres;
+    idx--;
+  }
+
+  return { point: pts[0], actualMetresBack: accumulated, ranOutOfRoute: true };
+}
 
 function getDecisionPoint(tollRoute, freeRoute, originLat, originLng, debug = false) {
   // Primary method: use Google's own "Toll road" instruction marker to find
-  // exactly where the toll segment begins, then back up a couple of steps
-  // for lead time. This is robust to routes that briefly diverge on local
-  // streets and later reconverge, which breaks pure polyline-proximity matching.
+  // the ramp/turn step where tolling begins, locate that point on the toll
+  // route's polyline, then walk back a fixed distance (not a fixed number
+  // of steps) along the actual road geometry for lead time. This is robust
+  // to routes that briefly diverge on local streets and later reconverge
+  // (which breaks pure polyline-proximity matching against the free route),
+  // and to steps of very different lengths (which breaks step counting).
   if (tollRoute) {
     const tollEntryIdx = findTollEntryStepIndex(tollRoute);
-    if (debug) console.log(`[DecisionPoint] tollEntryStepIndex=${tollEntryIdx}`);
+    if (debug) console.log(`tollEntryStepIndex=${tollEntryIdx}`);
 
     if (tollEntryIdx > 0) {
       const steps = tollRoute.legs?.[0]?.steps ?? [];
-      const leadIdx = Math.max(0, tollEntryIdx - DECISION_POINT_LEAD_STEPS);
-      const leadStep = steps[leadIdx];
-      const loc = leadStep?.startLocation?.latLng;
-      if (loc) {
-        if (debug) console.log(`[DecisionPoint] Using step[${leadIdx}] (${DECISION_POINT_LEAD_STEPS} step(s) before toll entry): "${leadStep.navigationInstruction?.instructions}"`);
-        return { latitude: loc.latitude, longitude: loc.longitude };
+      const rampStep = steps[tollEntryIdx - 1]; // the actual ramp/turn onto the toll road
+      const rampLoc = rampStep?.startLocation?.latLng;
+      const tollEncoded = tollRoute.polyline?.encodedPolyline;
+
+      if (rampLoc && tollEncoded) {
+        const tollPts = decodePolyline(tollEncoded);
+        const rampIdx = nearestPolylineIndex(tollPts, rampLoc.latitude, rampLoc.longitude);
+        const { point, actualMetresBack, ranOutOfRoute } = walkBackByDistance(tollPts, rampIdx, DECISION_POINT_LEAD_METRES);
+
+        if (debug) {
+          console.log(`Ramp/turn "${rampStep.navigationInstruction?.instructions}" at polyline idx ${rampIdx} (${rampLoc.latitude},${rampLoc.longitude})`);
+          console.log(`Backed off ${actualMetresBack.toFixed(0)}m along polyline to (${point.latitude.toFixed(5)},${point.longitude.toFixed(5)})${ranOutOfRoute ? ' (ran out of route before reaching target distance, using route start)' : ''}`);
+        }
+
+        return { latitude: point.latitude, longitude: point.longitude };
       }
     }
   }
