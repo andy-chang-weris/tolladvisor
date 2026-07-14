@@ -18,6 +18,15 @@ import {
   getDecisionPoint,
 } from './src/tollLogic';
 
+// ── Google API key ──────────────────────────────────────────────────────────
+// Read from the EXPO_PUBLIC_ prefixed env var so it's baked in at build time
+// instead of being typed into the UI. Put the real value in a local .env
+// file (gitignored): EXPO_PUBLIC_GOOGLE_API_KEY=AIza...
+// Note: EXPO_PUBLIC_ vars are inlined into the client bundle, so this is
+// convenience, not secret storage. For a truly hidden key, proxy Google
+// calls through your own backend instead.
+const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_API_KEY ?? '';
+
 // ── Notification handler ───────────────────────────────────────────────────
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -39,10 +48,10 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   if (eventType !== Location.GeofencingEventType.Enter) return;
   if (!_tripContext) return;
 
-  const { googleKey, destination, minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass } = _tripContext;
+  const { destination, minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass } = _tripContext;
   try {
     const pos      = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-    const routes   = await getRoutes(pos.coords.latitude, pos.coords.longitude, destination, googleKey, tollPass);
+    const routes   = await getRoutes(pos.coords.latitude, pos.coords.longitude, destination, GOOGLE_API_KEY, tollPass);
     const selected = selectRoutes(routes);
     const verdict  = calculateVerdict(selected, minTimeSaved, maxToll, annualSalary, urgencyLevel);
     if (!verdict) return;
@@ -515,7 +524,6 @@ function VerdictCard({ verdict }) {
 
 // ── Main App ───────────────────────────────────────────────────────────────
 export default function App() {
-  const [googleKey,        setGoogleKey]        = useState('');
   const [destination,      setDestination]      = useState('');
   const [minTimeSaved,     setMinTimeSaved]     = useState('10');
   const [maxToll,          setMaxToll]          = useState('10');
@@ -559,7 +567,6 @@ export default function App() {
         const saved = await AsyncStorage.getItem('settings');
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (parsed.googleKey)      setGoogleKey(parsed.googleKey);
           if (parsed.minTimeSaved)   setMinTimeSaved(parsed.minTimeSaved);
           if (parsed.maxToll)        setMaxToll(parsed.maxToll);
           if (parsed.annualSalary)   setAnnualSalary(parsed.annualSalary);
@@ -573,9 +580,9 @@ export default function App() {
 
   useEffect(() => {
     AsyncStorage.setItem('settings', JSON.stringify({
-      googleKey, minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass,
+      minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass,
     })).catch(() => {});
-  }, [googleKey, minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass]);
+  }, [minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass]);
 
   async function detectLocation() {
     setLocationText('Detecting...');
@@ -592,9 +599,9 @@ export default function App() {
       const lng = pos.coords.longitude;
       setCurrentLat(lat);
       setCurrentLng(lng);
-      if (googleKey) {
+      if (GOOGLE_API_KEY) {
         try {
-          const named = await getRoadViaGeocode(lat, lng, googleKey);
+          const named = await getRoadViaGeocode(lat, lng, GOOGLE_API_KEY);
           setLocationText(named.formatted);
         } catch {
           setLocationText(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
@@ -623,7 +630,7 @@ export default function App() {
 
   async function runAnalysis() {
     setError('');
-    if (!googleKey)           { setError('Google API key is required.'); return; }
+    if (!GOOGLE_API_KEY)      { setError('Google API key is not configured. Set EXPO_PUBLIC_GOOGLE_API_KEY in .env and rebuild.'); return; }
     if (!destination)         { setError('Please enter a destination address.'); return; }
     if (!locationText.trim()) { setError('Please enter or detect a starting location.'); return; }
 
@@ -638,7 +645,7 @@ export default function App() {
     let originLng = currentLng;
     if (locationMode === 'manual' || !originLat) {
       try {
-        const geocoded = await geocodeAddress(locationText, googleKey);
+        const geocoded = await geocodeAddress(locationText, GOOGLE_API_KEY);
         originLat = geocoded.lat;
         originLng = geocoded.lng;
         setCurrentLat(originLat);
@@ -654,12 +661,12 @@ export default function App() {
     try {
       let info;
       try {
-        const snapped = await snapToRoad(originLat, originLng, googleKey);
-        const named   = await getRoadViaGeocode(snapped.location.latitude, snapped.location.longitude, googleKey);
+        const snapped = await snapToRoad(originLat, originLng, GOOGLE_API_KEY);
+        const named   = await getRoadViaGeocode(snapped.location.latitude, snapped.location.longitude, GOOGLE_API_KEY);
         info = { roadName: named.roadName, formatted: named.formatted, method: 'Roads API + Geocoding' };
       } catch (roadsErr) {
         if (['ROADS_UNAVAILABLE', 'NO_ROAD'].includes(roadsErr.message)) {
-          const named = await getRoadViaGeocode(originLat, originLng, googleKey);
+          const named = await getRoadViaGeocode(originLat, originLng, GOOGLE_API_KEY);
           info = { roadName: named.roadName, formatted: named.formatted, method: 'Geocoding fallback' };
         } else {
           throw roadsErr;
@@ -677,7 +684,7 @@ export default function App() {
     setStep(2, 'running');
     let selectedRoutes;
     try {
-      const routes = await getRoutes(originLat, originLng, destination, googleKey, tollPass);
+      const routes = await getRoutes(originLat, originLng, destination, GOOGLE_API_KEY, tollPass);
       selectedRoutes = selectRoutes(routes);
 
       const list = [];
@@ -716,7 +723,7 @@ export default function App() {
     setNotificationSent(sent);
 
     _tripContext = {
-      googleKey, destination,
+      destination,
       minTimeSaved: minTimeSavedNum, maxToll: maxTollNum,
       annualSalary: annualSalaryNum, urgencyLevel, tollPass,
     };
@@ -785,8 +792,6 @@ export default function App() {
 
           <Card>
             <CardTitle>Configuration</CardTitle>
-            <Label>Google API Key</Label>
-            <FieldInput value={googleKey} onChangeText={setGoogleKey} placeholder="AIza..." secureTextEntry />
             <Label>Min time saved (minutes)</Label>
             <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
             <Label>Max toll willing to pay ($)</Label>
