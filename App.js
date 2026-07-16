@@ -241,6 +241,44 @@ function CardTitle({ children }) {
   return <Text style={s.cardTitle}>{children}</Text>;
 }
 
+// ── AddressInput ─────────────────────────────────────────────────────────
+// A text field for a location/destination address, plus a tappable list of
+// recently-used addresses. Recents show only while the field is empty, so
+// they act as quick-fill suggestions rather than a persistent dropdown that
+// would otherwise fight with normal typing.
+function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecent, onRemoveRecent, rightSlot }) {
+  const { s } = useTheme();
+  const showRecents = !value && recents && recents.length > 0;
+  return (
+    <View>
+      <View style={s.locRow}>
+        <View style={{ flex: 1 }}>
+          <FieldInput value={value} onChangeText={onChangeText} placeholder={placeholder} />
+        </View>
+        {rightSlot}
+      </View>
+      {showRecents && (
+        <View style={s.recentsWrap}>
+          <Text style={s.recentsLabel}>Recent</Text>
+          {recents.map((addr, i) => (
+            <View key={i} style={s.recentChip}>
+              <TouchableOpacity style={{ flex: 1 }} onPress={() => onSelectRecent(addr)} activeOpacity={0.7}>
+                <Text style={s.recentChipText} numberOfLines={1}>{addr}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => onRemoveRecent(addr)}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Text style={s.recentChipRemove}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
 function UrgencyPicker({ value, onChange }) {
   const { s } = useTheme();
   const current = URGENCY_OPTIONS.find(o => o.value === value) ?? URGENCY_OPTIONS[1];
@@ -399,6 +437,8 @@ export default function App() {
   const [error,            setError]            = useState('');
   const [settingsOpen,     setSettingsOpen]     = useState(false);
   const [theme,            setTheme]            = useState('dark');
+  const [recentLocations,    setRecentLocations]    = useState([]);
+  const [recentDestinations, setRecentDestinations] = useState([]);
 
   const C = COLORS[theme];
   const s = useMemo(() => makeStyles(C), [theme]);
@@ -434,10 +474,60 @@ export default function App() {
         }
         const savedTheme = await AsyncStorage.getItem('theme');
         if (savedTheme === 'light' || savedTheme === 'dark') setTheme(savedTheme);
+
+        const savedLocations = await AsyncStorage.getItem('recentLocations');
+        if (savedLocations) setRecentLocations(JSON.parse(savedLocations));
+        const savedDestinations = await AsyncStorage.getItem('recentDestinations');
+        if (savedDestinations) setRecentDestinations(JSON.parse(savedDestinations));
       } catch {}
     }
     loadSettings();
   }, []);
+
+  // ── Recent address helpers ─────────────────────────────────────────────
+  // Case-insensitive de-dupe, most-recent-first, capped list. Persisted to
+  // AsyncStorage separately for locations vs destinations so the two lists
+  // don't mix (a "from" address and a "to" address are rarely interchangeable).
+  const RECENTS_MAX = 6;
+
+  function upsertRecent(list, entry) {
+    const trimmed = (entry || '').trim();
+    if (!trimmed) return list;
+    const filtered = list.filter(item => item.toLowerCase() !== trimmed.toLowerCase());
+    return [trimmed, ...filtered].slice(0, RECENTS_MAX);
+  }
+
+  function pushRecentLocation(addr) {
+    setRecentLocations(prev => {
+      const next = upsertRecent(prev, addr);
+      AsyncStorage.setItem('recentLocations', JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }
+
+  function pushRecentDestination(addr) {
+    setRecentDestinations(prev => {
+      const next = upsertRecent(prev, addr);
+      AsyncStorage.setItem('recentDestinations', JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }
+
+  function removeRecentLocation(addr) {
+    setRecentLocations(prev => {
+      const next = prev.filter(a => a !== addr);
+      AsyncStorage.setItem('recentLocations', JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }
+
+  function removeRecentDestination(addr) {
+    setRecentDestinations(prev => {
+      const next = prev.filter(a => a !== addr);
+      AsyncStorage.setItem('recentDestinations', JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }
 
   useEffect(() => {
     AsyncStorage.setItem('settings', JSON.stringify({
@@ -566,6 +656,9 @@ export default function App() {
       setDisplayList(list);
       setNoFreeRoute(!selectedRoutes.freeRoute);
       setStep(2, 'done');
+
+      pushRecentLocation(locationText);
+      pushRecentDestination(destination);
     } catch (err) {
       setStep(2, 'error');
       setError('Step 2: ' + err.message);
@@ -662,20 +755,28 @@ export default function App() {
             <Card>
               <CardTitle>Route</CardTitle>
               <Label>Starting Location</Label>
-              <View style={s.locRow}>
-                <View style={{ flex: 1 }}>
-                  <FieldInput
-                    value={locationText}
-                    onChangeText={t => { setLocationText(t); setLocationMode('manual'); }}
-                    placeholder='e.g. 1600 Pennsylvania Ave, Washington DC'
-                  />
-                </View>
-                <TouchableOpacity style={s.locBtn} onPress={detectLocation} activeOpacity={0.8}>
-                  <Text style={s.locBtnIcon}>📍</Text>
-                </TouchableOpacity>
-              </View>
+              <AddressInput
+                value={locationText}
+                onChangeText={t => { setLocationText(t); setLocationMode('manual'); }}
+                placeholder='e.g. 1600 Pennsylvania Ave, Washington DC'
+                recents={recentLocations}
+                onSelectRecent={addr => { setLocationText(addr); setLocationMode('manual'); }}
+                onRemoveRecent={removeRecentLocation}
+                rightSlot={
+                  <TouchableOpacity style={s.locBtn} onPress={detectLocation} activeOpacity={0.8}>
+                    <Text style={s.locBtnIcon}>📍</Text>
+                  </TouchableOpacity>
+                }
+              />
               <Label>Destination</Label>
-              <FieldInput value={destination} onChangeText={setDestination} placeholder='e.g. 1600 Pennsylvania Ave, Washington DC' />
+              <AddressInput
+                value={destination}
+                onChangeText={setDestination}
+                placeholder='e.g. 1600 Pennsylvania Ave, Washington DC'
+                recents={recentDestinations}
+                onSelectRecent={setDestination}
+                onRemoveRecent={removeRecentDestination}
+              />
             </Card>
 
             {pipelineStarted && !allStepsDone && (
@@ -858,6 +959,12 @@ function makeStyles(C) {
     locRow:         { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
     locBtn:         { width: 42, height: 42, backgroundColor: C.border2, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
     locBtnIcon:     { fontSize: 16 },
+
+    recentsWrap:       { marginTop: 6 },
+    recentsLabel:      { fontSize: 9, color: C.muted, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 },
+    recentChip:        { flexDirection: 'row', alignItems: 'center', backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 4 },
+    recentChipText:    { fontSize: 12, color: C.text },
+    recentChipRemove:  { fontSize: 12, color: C.muted, paddingLeft: 10 },
 
     divider:        { height: 1, backgroundColor: C.border, marginTop: 16, marginBottom: 4 },
 
