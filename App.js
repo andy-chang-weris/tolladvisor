@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, createContext, useContext } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, createContext, useContext } from 'react';
 import {
   StyleSheet, Text, View, TextInput, TouchableOpacity,
   ScrollView, ActivityIndicator, SafeAreaView, Platform,
@@ -212,7 +212,7 @@ function Label({ children }) {
   return <Text style={s.label}>{children}</Text>;
 }
 
-function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboardType, editable = true }) {
+function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboardType, editable = true, onFocus, onBlur }) {
   const { C, s } = useTheme();
   const [focused, setFocused] = useState(false);
   return (
@@ -225,8 +225,8 @@ function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboar
       secureTextEntry={secureTextEntry}
       keyboardType={keyboardType}
       editable={editable}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
+      onFocus={() => { setFocused(true); onFocus && onFocus(); }}
+      onBlur={() => { setFocused(false); onBlur && onBlur(); }}
     />
   );
 }
@@ -242,18 +242,43 @@ function CardTitle({ children }) {
 }
 
 // ── AddressInput ─────────────────────────────────────────────────────────
-// A text field for a location/destination address, plus a tappable list of
-// recently-used addresses. Recents show only while the field is empty, so
-// they act as quick-fill suggestions rather than a persistent dropdown that
-// would otherwise fight with normal typing.
+// A text field for a location/destination address, plus a dropdown of
+// recently-used addresses that opens when the field is tapped (focused) and
+// closes when the user taps away or picks one. The blur handler waits a beat
+// before closing the list — otherwise the field loses focus and hides the
+// dropdown a moment before a chip's own tap has a chance to register, which
+// on some devices cancels the tap entirely.
+const BLUR_CLOSE_DELAY_MS = 150;
+
 function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecent, onRemoveRecent, rightSlot }) {
   const { s } = useTheme();
-  const showRecents = !value && recents && recents.length > 0;
+  const [open, setOpen] = useState(false);
+  const closeTimer = useRef(null);
+
+  function handleFocus() {
+    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; }
+    setOpen(true);
+  }
+
+  function handleBlur() {
+    closeTimer.current = setTimeout(() => setOpen(false), BLUR_CLOSE_DELAY_MS);
+  }
+
+  useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current); }, []);
+
+  const showRecents = open && recents && recents.length > 0;
+
   return (
     <View>
       <View style={s.locRow}>
         <View style={{ flex: 1 }}>
-          <FieldInput value={value} onChangeText={onChangeText} placeholder={placeholder} />
+          <FieldInput
+            value={value}
+            onChangeText={onChangeText}
+            placeholder={placeholder}
+            onFocus={handleFocus}
+            onBlur={handleBlur}
+          />
         </View>
         {rightSlot}
       </View>
@@ -262,7 +287,11 @@ function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecen
           <Text style={s.recentsLabel}>Recent</Text>
           {recents.map((addr, i) => (
             <View key={i} style={s.recentChip}>
-              <TouchableOpacity style={{ flex: 1 }} onPress={() => onSelectRecent(addr)} activeOpacity={0.7}>
+              <TouchableOpacity
+                style={{ flex: 1 }}
+                onPress={() => { onSelectRecent(addr); setOpen(false); }}
+                activeOpacity={0.7}
+              >
                 <Text style={s.recentChipText} numberOfLines={1}>{addr}</Text>
               </TouchableOpacity>
               <TouchableOpacity
