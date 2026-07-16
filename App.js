@@ -48,10 +48,10 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   if (eventType !== Location.GeofencingEventType.Enter) return;
   if (!_tripContext) return;
 
-  const { destination, minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass } = _tripContext;
+  const { destination, minTimeSaved, maxToll, annualSalary, urgencyLevel } = _tripContext;
   try {
     const pos      = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-    const routes   = await getRoutes(pos.coords.latitude, pos.coords.longitude, destination, GOOGLE_API_KEY, tollPass);
+    const routes   = await getRoutes(pos.coords.latitude, pos.coords.longitude, destination, GOOGLE_API_KEY);
     const selected = selectRoutes(routes);
     const verdict  = calculateVerdict(selected, minTimeSaved, maxToll, annualSalary, urgencyLevel);
     if (!verdict) return;
@@ -84,118 +84,6 @@ const C = {
   blue:    '#3b82f6',
   blueD:   'rgba(59,130,246,0.10)',
 };
-
-// ── Toll pass options (Google Routes API TollPass enum values) ─────────────
-// Full list sourced directly from the official Google documentation:
-// https://developers.google.com/maps/documentation/routes_preferred/reference/rest/Shared.Types/TollPass
-const TOLL_PASS_OPTIONS = [
-  // Australia
-  { label: 'Linkt (AU)',            value: 'AU_LINKT' },
-  { label: 'e-Toll Tag (AU-SYD)',   value: 'AU_ETOLL_TAG' },
-  { label: 'Eway Tag (AU-SYD)',     value: 'AU_EWAY_TAG' },
-  // Argentina
-  { label: 'Telepase (AR)',         value: 'AR_TELEPEASE' },
-  // Brazil
-  { label: 'Sem Parar (BR)',        value: 'BR_SEM_PARAR' },
-  { label: 'ConectCar (BR)',        value: 'BR_CONECTCAR' },
-  { label: 'Move Mais (BR)',        value: 'BR_MOVE_MAIS' },
-  { label: 'Taggy (BR)',            value: 'BR_TAGGY' },
-  { label: 'Veloe (BR)',            value: 'BR_VELOE' },
-  { label: 'Auto Expreso (BR)',     value: 'BR_AUTO_EXPRESO' },
-  { label: 'Passa Rapido (BR)',     value: 'BR_PASSA_RAPIDO' },
-  // Canada / US border
-  { label: 'Blue Water Edge Pass',  value: 'CA_US_BLUE_WATER_EDGE_PASS' },
-  { label: 'NEXUS Card',            value: 'CA_US_NEXUS_CARD' },
-  { label: 'Connexion',             value: 'CA_US_CONNEXION' },
-  { label: 'Akwasasne Corp Card',   value: 'CA_US_AKWASASNE_SEAWAY_CORPORATE_CARD' },
-  { label: 'Akwasasne Transit Card',value: 'CA_US_AKWASASNE_SEAWAY_TRANSIT_CARD' },
-  // India
-  { label: 'FASTag (IN)',           value: 'IN_FASTAG' },
-  { label: 'HP Plate Exempt (IN)',  value: 'IN_LOCAL_HP_PLATE_EXEMPT' },
-  // Indonesia
-  { label: 'e-Toll (ID)',           value: 'ID_E_TOLL' },
-  // Japan
-  { label: 'ETC (JP)',              value: 'JP_ETC' },
-  { label: 'ETC 2.0 (JP)',          value: 'JP_ETC2' },
-  // Mexico
-  { label: 'IAVE (MX)',             value: 'MX_IAVE' },
-  { label: 'Pase (MX)',             value: 'MX_PASE' },
-  { label: 'Televia (MX)',          value: 'MX_TELEVIA' },
-  { label: 'Tag Televia (MX)',      value: 'MX_TAG_TELEVIA' },
-  { label: 'Viapass (MX)',          value: 'MX_VIAPASS' },
-  { label: 'QuickPass (MX)',        value: 'MX_QUICKPASS' },
-  { label: 'Tag IAVE (MX)',         value: 'MX_TAG_IAVE' },
-  { label: 'Telepeaje Chihuahua',   value: 'MX_SISTEMA_TELEPEAJE_CHIHUAHUA' },
-  // United States — by state
-  { label: 'Freedom Pass (AL)',     value: 'US_AL_FREEDOM_PASS' },
-  { label: 'Anderson Tunnel (AK)',  value: 'US_AK_ANTON_ANDERSON_TUNNEL_BOOK_OF_10_TICKETS' },
-  { label: 'FasTrak (CA)',          value: 'US_CA_FASTRAK' },
-  { label: 'FasTrak CAV (CA)',      value: 'US_CA_FASTRAK_CAV_STICKER' },
-  { label: 'ExpressToll (CO)',      value: 'US_CO_EXPRESSTOLL' },
-  { label: 'Go Pass (CO)',          value: 'US_CO_GO_PASS' },
-  { label: 'E-ZPass (DE)',          value: 'US_DE_EZPASSDE' },
-  { label: 'E-PASS (FL)',           value: 'US_FL_EPASS' },
-  { label: 'SunPass (FL)',          value: 'US_FL_SUNPASS' },
-  { label: 'SunPass Pro (FL)',      value: 'US_FL_SUNPASS_PRO' },
-  { label: 'LeeWay (FL)',           value: 'US_FL_LEEWAY' },
-  { label: 'Bob Sikes Pass (FL)',   value: 'US_FL_BOB_SIKES_TOLL_BRIDGE_PASS' },
-  { label: 'Dunes Express (FL)',    value: 'US_FL_DUNES_COMMUNITY_DEVELOPMENT_DISTRICT_EXPRESSCARD' },
-  { label: 'GIBA Pass (FL)',        value: 'US_FL_GIBA_TOLL_PASS' },
-  { label: 'E-ZPass (IL)',          value: 'US_IL_EZPASSIL' },
-  { label: 'iPass (IL)',            value: 'US_IL_IPASS' },
-  { label: 'E-ZPass (IN)',          value: 'US_IN_EZPASSIN' },
-  { label: 'K-TAG (KS)',            value: 'US_KS_KTAG' },
-  { label: 'BestPass Horizon (KS)', value: 'US_KS_BESTPASS_HORIZON' },
-  { label: 'NationalPass (KS)',     value: 'US_KS_NATIONALPASS' },
-  { label: 'PrePass Elite (KS)',    value: 'US_KS_PREPASS_ELITEPASS' },
-  { label: 'RiverLink (KY)',        value: 'US_KY_RIVERLINK' },
-  { label: 'GeauxPass (LA)',        value: 'US_LA_GEAUXPASS' },
-  { label: 'Toll Tag (LA)',         value: 'US_LA_TOLL_TAG' },
-  { label: 'E-ZPass (MA)',          value: 'US_MA_EZPASSMA' },
-  { label: 'E-ZPass (MD)',          value: 'US_MD_EZPASSMD' },
-  { label: 'E-ZPass (ME)',          value: 'US_ME_EZPASSME' },
-  { label: 'Ambassador Card (MI)',  value: 'US_MI_AMBASSADOR_BRIDGE_PREMIER_COMMUTER_CARD' },
-  { label: 'BCPass (MI)',           value: 'US_MI_BCPASS' },
-  { label: 'Grosse Ile Pass (MI)',  value: 'US_MI_GROSSE_ILE_TOLL_BRIDGE_PASS_TAG' },
-  { label: 'IQ Tag (MI)',           value: 'US_MI_IQ_TAG' },
-  { label: 'Mac Pass (MI)',         value: 'US_MI_MACKINAC_BRIDGE_MAC_PASS' },
-  { label: 'NExpress Toll (MI)',    value: 'US_MI_NEXPRESS_TOLL' },
-  { label: 'E-ZPass (MN)',          value: 'US_MN_EZPASSMN' },
-  { label: 'E-ZPass (NC)',          value: 'US_NC_EZPASSNC' },
-  { label: 'Peach Pass (NC)',       value: 'US_NC_PEACH_PASS' },
-  { label: 'Quick Pass (NC)',       value: 'US_NC_QUICK_PASS' },
-  { label: 'E-ZPass (NH)',          value: 'US_NH_EZPASSNH' },
-  { label: 'Downbeach Pass (NJ)',   value: 'US_NJ_DOWNBEACH_EXPRESS_PASS' },
-  { label: 'E-ZPass (NJ)',          value: 'US_NJ_EZPASSNJ' },
-  { label: 'E-ZPass (NY)',          value: 'US_NY_EZPASSNY' },
-  { label: 'ExpressPass (NY)',      value: 'US_NY_EXPRESSPASS' },
-  { label: 'E-ZPass (OH)',          value: 'US_OH_EZPASSOH' },
-  { label: 'E-ZPass (PA)',          value: 'US_PA_EZPASSPA' },
-  { label: 'E-ZPass (RI)',          value: 'US_RI_EZPASSRI' },
-  { label: 'PalPass (SC)',          value: 'US_SC_PALPASS' },
-  { label: 'TxTag (TX)',            value: 'US_TX_TXTAG' },
-  { label: 'EZ TAG (TX)',           value: 'US_TX_EZTAG' },
-  { label: 'TollTag (TX)',          value: 'US_TX_TOLLTAG' },
-  { label: 'BancPass (TX)',         value: 'US_TX_BANCPASS' },
-  { label: 'AVI Tag (TX)',          value: 'US_TX_AVI_TAG' },
-  { label: 'eFAST Pass (TX)',       value: 'US_TX_EFAST_PASS' },
-  { label: 'EZCross (TX)',          value: 'US_TX_EZ_CROSS' },
-  { label: 'Fuego Tag (TX)',        value: 'US_TX_FUEGO_TAG' },
-  { label: 'PlusPass (TX)',         value: 'US_TX_PLUSPASS' },
-  { label: 'Xpress Card (TX)',      value: 'US_TX_XPRESS_CARD' },
-  { label: 'Del Rio Pass (TX)',     value: 'US_TX_DEL_RIO_PASS' },
-  { label: 'Eagle Pass Card (TX)',  value: 'US_TX_EAGLE_PASS_EXPRESS_CARD' },
-  { label: 'EPToll (TX)',           value: 'US_TX_EPTOLL' },
-  { label: 'Laredo Trade Tag (TX)', value: 'US_TX_LAREDO_TRADE_TAG' },
-  { label: 'Adams Ave Pkwy (UT)',   value: 'US_UT_ADAMS_AVE_PARKWAY_EXPRESSCARD' },
-  { label: 'E-ZPass (VA)',          value: 'US_VA_EZPASSVA' },
-  { label: 'Good To Go! (WA)',      value: 'US_WA_GOOD_TO_GO' },
-  { label: 'BreezeBy (WA)',         value: 'US_WA_BREEZEBY' },
-  { label: 'E-ZPass (WV)',          value: 'US_WV_EZPASSWV' },
-  { label: 'Memorial Bridge (WV)',  value: 'US_WV_MEMORIAL_BRIDGE_TICKETS' },
-  { label: 'MOV Pass (WV)',         value: 'US_WV_MOV_PASS' },
-  { label: 'Newell Bridge (WV)',    value: 'US_WV_NEWELL_TOLL_BRIDGE_TICKET' },
-];
 
 // ── Notification helpers ───────────────────────────────────────────────────
 async function requestNotificationPermission() {
@@ -258,13 +146,9 @@ async function geocodeAddress(address, googleKey) {
   return { lat: loc.lat, lng: loc.lng };
 }
 
-// tollPass: a TollPass enum string (e.g. 'US_NY_EZPASSNY') or 'none'
-async function getRoutes(originLat, originLng, destination, googleKey, tollPass = 'none') {
-  const tollPassArray = tollPass && tollPass !== 'none' ? [tollPass] : [];
-
+async function getRoutes(originLat, originLng, destination, googleKey) {
   const baseRouteModifiers = {
     vehicleInfo: { emissionType: 'GASOLINE' },
-    ...(tollPassArray.length > 0 && { tollPasses: tollPassArray }),
   };
 
   const baseBody = {
@@ -341,58 +225,6 @@ function Card({ children, style }) {
 
 function CardTitle({ children }) {
   return <Text style={s.cardTitle}>{children}</Text>;
-}
-
-// ── TollPassPicker ─────────────────────────────────────────────────────────
-// Toggle + scrollable list of pass options. Shows only when enabled.
-function TollPassPicker({ value, onChange }) {
-  const enabled = value !== 'none';
-
-  function toggle() {
-    onChange(enabled ? 'none' : TOLL_PASS_OPTIONS[0].value);
-  }
-
-  return (
-    <View>
-      {/* Toggle row */}
-      <View style={s.toggleRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.toggleLabel}>Toll pass / transponder</Text>
-          <Text style={s.toggleSub}>
-            {enabled ? 'Pass pricing active' : 'Cash pricing (default)'}
-          </Text>
-        </View>
-        <TouchableOpacity
-          style={[s.toggleBtn, enabled && s.toggleBtnOn]}
-          onPress={toggle}
-          activeOpacity={0.8}
-        >
-          <View style={[s.toggleThumb, enabled && s.toggleThumbOn]} />
-        </TouchableOpacity>
-      </View>
-
-      {/* Pass selector — only shown when enabled */}
-      {enabled && (
-        <View style={s.passGrid}>
-          {TOLL_PASS_OPTIONS.map(opt => {
-            const active = opt.value === value;
-            return (
-              <TouchableOpacity
-                key={opt.value}
-                style={[s.passChip, active && s.passChipActive]}
-                onPress={() => onChange(opt.value)}
-                activeOpacity={0.7}
-              >
-                <Text style={[s.passChipText, active && s.passChipTextActive]}>
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      )}
-    </View>
-  );
 }
 
 // ── UrgencyPicker ──────────────────────────────────────────────────────────
@@ -529,7 +361,6 @@ export default function App() {
   const [maxToll,          setMaxToll]          = useState('10');
   const [annualSalary,     setAnnualSalary]     = useState('');
   const [urgencyLevel,     setUrgencyLevel]     = useState('med');
-  const [tollPass,         setTollPass]         = useState('none');
 
   const [locationText,     setLocationText]     = useState('');
   const [locationMode,     setLocationMode]     = useState('manual');
@@ -571,7 +402,6 @@ export default function App() {
           if (parsed.maxToll)        setMaxToll(parsed.maxToll);
           if (parsed.annualSalary)   setAnnualSalary(parsed.annualSalary);
           if (parsed.urgencyLevel)   setUrgencyLevel(parsed.urgencyLevel);
-          if (parsed.tollPass)       setTollPass(parsed.tollPass);
         }
       } catch {}
     }
@@ -580,9 +410,9 @@ export default function App() {
 
   useEffect(() => {
     AsyncStorage.setItem('settings', JSON.stringify({
-      minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass,
+      minTimeSaved, maxToll, annualSalary, urgencyLevel,
     })).catch(() => {});
-  }, [minTimeSaved, maxToll, annualSalary, urgencyLevel, tollPass]);
+  }, [minTimeSaved, maxToll, annualSalary, urgencyLevel]);
 
   async function detectLocation() {
     setLocationText('Detecting...');
@@ -684,7 +514,7 @@ export default function App() {
     setStep(2, 'running');
     let selectedRoutes;
     try {
-      const routes = await getRoutes(originLat, originLng, destination, GOOGLE_API_KEY, tollPass);
+      const routes = await getRoutes(originLat, originLng, destination, GOOGLE_API_KEY);
       selectedRoutes = selectRoutes(routes);
 
       const list = [];
@@ -725,7 +555,7 @@ export default function App() {
     _tripContext = {
       destination,
       minTimeSaved: minTimeSavedNum, maxToll: maxTollNum,
-      annualSalary: annualSalaryNum, urgencyLevel, tollPass,
+      annualSalary: annualSalaryNum, urgencyLevel,
     };
 
     try {
@@ -801,9 +631,6 @@ export default function App() {
 
             <View style={s.divider} />
             <UrgencyPicker value={urgencyLevel} onChange={setUrgencyLevel} />
-
-            <View style={s.divider} />
-            <TollPassPicker value={tollPass} onChange={setTollPass} />
           </Card>
 
           <Text style={s.sectionLabel}>Analysis Pipeline</Text>
@@ -903,13 +730,8 @@ const s = StyleSheet.create({
 
   divider:        { height: 1, backgroundColor: C.border, marginTop: 16, marginBottom: 4 },
 
-  toggleRow:      { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
   toggleLabel:    { fontSize: 13, color: C.text, fontWeight: '600' },
   toggleSub:      { fontSize: 11, color: C.muted, marginTop: 2 },
-  toggleBtn:      { width: 44, height: 26, borderRadius: 13, backgroundColor: C.border2, justifyContent: 'center', paddingHorizontal: 3 },
-  toggleBtnOn:    { backgroundColor: C.green },
-  toggleThumb:    { width: 20, height: 20, borderRadius: 10, backgroundColor: C.muted },
-  toggleThumbOn:  { backgroundColor: '#000', alignSelf: 'flex-end' },
 
   passGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   passChip:       { borderWidth: 1, borderColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
