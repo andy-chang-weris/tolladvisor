@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import {
   StyleSheet, Text, View, TextInput, TouchableOpacity,
   ScrollView, ActivityIndicator, SafeAreaView, Platform,
-  StatusBar, KeyboardAvoidingView,
+  StatusBar, KeyboardAvoidingView, Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -376,6 +376,7 @@ export default function App() {
   const [notificationSent, setNotificationSent] = useState(false);
   const [geofenceArmed,    setGeofenceArmed]    = useState(false);
   const [error,            setError]            = useState('');
+  const [settingsOpen,     setSettingsOpen]     = useState(false);
 
   const setStep = useCallback((n, state) => {
     setStepStates(prev => ({ ...prev, [n]: state }));
@@ -593,9 +594,11 @@ export default function App() {
     <SafeAreaView style={s.safe}>
       <StatusBar barStyle="light-content" backgroundColor={C.dark} />
 
-      <View style={s.topbar}>
-        <View style={s.logoDot} />
+      <View style={[s.topbar, s.topbarRow]}>
         <Text style={s.logoText}>TOLL ADVISOR</Text>
+        <TouchableOpacity style={s.settingsBtn} onPress={() => setSettingsOpen(true)} activeOpacity={0.7}>
+          <Text style={s.settingsBtnText}>⚙︎</Text>
+        </TouchableOpacity>
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -618,19 +621,6 @@ export default function App() {
             </View>
             <Label>Destination</Label>
             <FieldInput value={destination} onChangeText={setDestination} placeholder='e.g. 1600 Pennsylvania Ave, Washington DC' />
-          </Card>
-
-          <Card>
-            <CardTitle>Configuration</CardTitle>
-            <Label>Min time saved (minutes)</Label>
-            <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
-            <Label>Max toll willing to pay ($)</Label>
-            <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="10" />
-            <Label>Your annual salary ($ per year)</Label>
-            <FieldInput value={annualSalary} onChangeText={setAnnualSalary} keyboardType="numeric" placeholder="50000" />
-
-            <View style={s.divider} />
-            <UrgencyPicker value={urgencyLevel} onChange={setUrgencyLevel} />
           </Card>
 
           <Text style={s.sectionLabel}>Analysis Pipeline</Text>
@@ -702,6 +692,38 @@ export default function App() {
           <View style={{ height: 40 }} />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={settingsOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setSettingsOpen(false)}
+      >
+        <View style={s.modalOverlay}>
+          <View style={s.modalPanel}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>Settings</Text>
+              <TouchableOpacity onPress={() => setSettingsOpen(false)} activeOpacity={0.7}>
+                <Text style={s.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+              <Card>
+                <CardTitle>Configuration</CardTitle>
+                <Label>Min time saved (minutes)</Label>
+                <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
+                <Label>Max toll willing to pay ($)</Label>
+                <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="10" />
+                <Label>Your annual salary ($ per year)</Label>
+                <FieldInput value={annualSalary} onChangeText={setAnnualSalary} keyboardType="numeric" placeholder="50000" />
+
+                <View style={s.divider} />
+                <UrgencyPicker value={urgencyLevel} onChange={setUrgencyLevel} />
+              </Card>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -709,9 +731,18 @@ export default function App() {
 const s = StyleSheet.create({
   safe:           { flex: 1, backgroundColor: C.black },
   topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 36, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
-  logoDot:        { width: 8, height: 8, borderRadius: 4, backgroundColor: C.green, marginBottom: 4 },
+  topbarRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   logoText:       { fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: 2 },
   logoSub:        { fontSize: 10, color: C.muted, letterSpacing: 1.5, marginTop: 2 },
+
+  settingsBtn:     { width: 34, height: 34, borderRadius: 8, backgroundColor: C.panel, borderWidth: 1, borderColor: C.border2, alignItems: 'center', justifyContent: 'center' },
+  settingsBtnText: { fontSize: 16, color: C.text },
+
+  modalOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalPanel:     { backgroundColor: C.dark, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
+  modalHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  modalTitle:     { fontSize: 16, fontWeight: '700', color: C.text },
+  modalClose:     { fontSize: 18, color: C.muted, padding: 4 },
 
   scroll:         { flex: 1 },
   scrollContent:  { padding: 16 },
