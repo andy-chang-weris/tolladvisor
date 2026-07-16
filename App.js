@@ -1,8 +1,8 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo, createContext, useContext } from 'react';
 import {
   StyleSheet, Text, View, TextInput, TouchableOpacity,
   ScrollView, ActivityIndicator, SafeAreaView, Platform,
-  StatusBar, KeyboardAvoidingView, Modal,
+  StatusBar, KeyboardAvoidingView, Modal, Switch,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -66,24 +66,52 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
 });
 
 // ── Colour tokens ──────────────────────────────────────────────────────────
-const C = {
-  black:   '#0a0a0a',
-  dark:    '#111318',
-  panel:   '#181c24',
-  border:  'rgba(255,255,255,0.07)',
-  border2: 'rgba(255,255,255,0.12)',
-  text:    '#e8eaf0',
-  muted:   '#6b7280',
-  green:   '#22c55e',
-  greenD:  'rgba(34,197,94,0.12)',
-  greenB:  'rgba(34,197,94,0.25)',
-  amber:   '#f59e0b',
-  amberD:  'rgba(245,158,11,0.12)',
-  red:     '#ef4444',
-  redD:    'rgba(239,68,68,0.10)',
-  blue:    '#3b82f6',
-  blueD:   'rgba(59,130,246,0.10)',
+// Two palettes, keyed by semantic role so components don't need to know
+// which theme is active — they just read from whichever palette is current.
+const COLORS = {
+  dark: {
+    black:   '#0a0a0a',
+    dark:    '#111318',
+    panel:   '#181c24',
+    border:  'rgba(255,255,255,0.07)',
+    border2: 'rgba(255,255,255,0.12)',
+    text:    '#e8eaf0',
+    muted:   '#6b7280',
+    green:   '#22c55e',
+    greenD:  'rgba(34,197,94,0.12)',
+    greenB:  'rgba(34,197,94,0.25)',
+    amber:   '#f59e0b',
+    amberD:  'rgba(245,158,11,0.12)',
+    red:     '#ef4444',
+    redD:    'rgba(239,68,68,0.10)',
+    blue:    '#3b82f6',
+    blueD:   'rgba(59,130,246,0.10)',
+  },
+  light: {
+    black:   '#f4f5f7',
+    dark:    '#ffffff',
+    panel:   '#ffffff',
+    border:  'rgba(0,0,0,0.08)',
+    border2: 'rgba(0,0,0,0.16)',
+    text:    '#111318',
+    muted:   '#6b7280',
+    green:   '#16a34a',
+    greenD:  'rgba(22,163,74,0.10)',
+    greenB:  'rgba(22,163,74,0.25)',
+    amber:   '#b45309',
+    amberD:  'rgba(180,83,9,0.10)',
+    red:     '#dc2626',
+    redD:    'rgba(220,38,38,0.08)',
+    blue:    '#2563eb',
+    blueD:   'rgba(37,99,235,0.08)',
+  },
 };
+
+// ── Theme context ───────────────────────────────────────────────────────────
+// Lets every component below read the active colour palette and its matching
+// stylesheet without threading props through every layer.
+const ThemeContext = createContext({ theme: 'dark', C: COLORS.dark, s: makeStyles(COLORS.dark) });
+function useTheme() { return useContext(ThemeContext); }
 
 // ── Notification helpers ───────────────────────────────────────────────────
 async function requestNotificationPermission() {
@@ -198,10 +226,12 @@ async function getRoutes(originLat, originLng, destination, googleKey) {
 
 // ── Reusable UI components ─────────────────────────────────────────────────
 function Label({ children }) {
+  const { s } = useTheme();
   return <Text style={s.label}>{children}</Text>;
 }
 
 function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboardType, editable = true }) {
+  const { C, s } = useTheme();
   const [focused, setFocused] = useState(false);
   return (
     <TextInput
@@ -220,10 +250,12 @@ function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboar
 }
 
 function Card({ children, style }) {
+  const { s } = useTheme();
   return <View style={[s.card, style]}>{children}</View>;
 }
 
 function CardTitle({ children }) {
+  const { s } = useTheme();
   return <Text style={s.cardTitle}>{children}</Text>;
 }
 
@@ -231,6 +263,7 @@ function CardTitle({ children }) {
 // Three-way selector for how time-critical this trip is. The selected level's
 // weight scales the value of travel time saved in the verdict calculation.
 function UrgencyPicker({ value, onChange }) {
+  const { s } = useTheme();
   const current = URGENCY_OPTIONS.find(o => o.value === value) ?? URGENCY_OPTIONS[1];
   return (
     <View>
@@ -262,6 +295,7 @@ function UrgencyPicker({ value, onChange }) {
 }
 
 function StepPill({ state }) {
+  const { C, s } = useTheme();
   const color  = state === 'running' ? C.amber : state === 'done' ? C.green : state === 'error' ? C.red : C.muted;
   const border = state === 'running' ? 'rgba(245,158,11,0.3)' : state === 'done' ? 'rgba(34,197,94,0.3)' : state === 'error' ? 'rgba(239,68,68,0.3)' : C.border;
   return (
@@ -275,6 +309,7 @@ function StepPill({ state }) {
 }
 
 function StepCard({ num, title, state, children }) {
+  const { C, s } = useTheme();
   const borderColor = state === 'running' ? 'rgba(59,130,246,0.5)' : state === 'done' ? 'rgba(34,197,94,0.4)' : state === 'error' ? 'rgba(239,68,68,0.4)' : C.border;
   return (
     <View style={[s.step, { borderColor }]}>
@@ -291,10 +326,12 @@ function StepCard({ num, title, state, children }) {
 }
 
 function Connector() {
+  const { s } = useTheme();
   return <View style={s.connector} />;
 }
 
 function RouteCard({ route, isToll, isAlt }) {
+  const { C, s } = useTheme();
   const cost      = getTollCost(route);
   const distKm    = (route.distanceMeters / 1000).toFixed(1);
   const label     = isToll ? (isAlt ? 'TOLL ROUTE (ALT)' : 'TOLL ROUTE') : 'FREE ROUTE';
@@ -322,6 +359,7 @@ function RouteCard({ route, isToll, isAlt }) {
 }
 
 function VerdictCard({ verdict }) {
+  const { C, s } = useTheme();
   const take        = verdict.recommendation === 'TAKE_TOLL';
   const bg          = take ? C.greenD : C.blueD;
   const border      = take ? C.greenB : 'rgba(59,130,246,0.25)';
@@ -377,6 +415,10 @@ export default function App() {
   const [geofenceArmed,    setGeofenceArmed]    = useState(false);
   const [error,            setError]            = useState('');
   const [settingsOpen,     setSettingsOpen]     = useState(false);
+  const [theme,            setTheme]            = useState('dark');
+
+  const C = COLORS[theme];
+  const s = useMemo(() => makeStyles(C), [theme]);
 
   const setStep = useCallback((n, state) => {
     setStepStates(prev => ({ ...prev, [n]: state }));
@@ -407,6 +449,8 @@ export default function App() {
           if (parsed.annualSalary)   setAnnualSalary(parsed.annualSalary);
           if (parsed.urgencyLevel)   setUrgencyLevel(parsed.urgencyLevel);
         }
+        const savedTheme = await AsyncStorage.getItem('theme');
+        if (savedTheme === 'light' || savedTheme === 'dark') setTheme(savedTheme);
       } catch {}
     }
     loadSettings();
@@ -417,6 +461,10 @@ export default function App() {
       minTimeSaved, maxToll, annualSalary, urgencyLevel,
     })).catch(() => {});
   }, [minTimeSaved, maxToll, annualSalary, urgencyLevel]);
+
+  useEffect(() => {
+    AsyncStorage.setItem('theme', theme).catch(() => {});
+  }, [theme]);
 
   async function detectLocation() {
     setLocationText('Detecting...');
@@ -594,64 +642,108 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={s.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={C.dark} />
+    <ThemeContext.Provider value={{ theme, C, s }}>
+      <SafeAreaView style={s.safe}>
+        <StatusBar barStyle={theme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={C.dark} />
 
-      <View style={[s.topbar, s.topbarRow]}>
-        <Text style={s.logoText}>TOLL ADVISOR</Text>
-        <TouchableOpacity style={s.settingsBtn} onPress={() => setSettingsOpen(true)} activeOpacity={0.7}>
-          <Text style={s.settingsBtnText}>⚙︎</Text>
-        </TouchableOpacity>
-      </View>
-
-      <TouchableOpacity style={s.configSummary} onPress={() => setSettingsOpen(true)} activeOpacity={0.7}>
-        <Text style={s.configSummaryText}>
-          {`Save ${minTimeSaved || 0}+ min · pay up to $${maxToll || 0} · ${(URGENCY_OPTIONS.find(o => o.value === urgencyLevel) ?? URGENCY_OPTIONS[1]).label} urgency`}
-        </Text>
-        <Text style={s.configSummaryEdit}>Edit</Text>
-      </TouchableOpacity>
-
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
-
-          <Card>
-            <CardTitle>Route</CardTitle>
-            <Label>Starting Location</Label>
-            <View style={s.locRow}>
-              <View style={{ flex: 1 }}>
-                <FieldInput
-                  value={locationText}
-                  onChangeText={t => { setLocationText(t); setLocationMode('manual'); }}
-                  placeholder='e.g. 1600 Pennsylvania Ave, Washington DC'
-                />
-              </View>
-              <TouchableOpacity style={s.locBtn} onPress={detectLocation} activeOpacity={0.8}>
-                <Text style={s.locBtnIcon}>📍</Text>
-              </TouchableOpacity>
+        <View style={[s.topbar, s.topbarRow]}>
+          <Text style={s.logoText}>TOLL ADVISOR</Text>
+          <View style={s.topbarRight}>
+            <View style={s.themeToggle}>
+              <Text style={s.themeIcon}>☀️</Text>
+              <Switch
+                value={theme === 'dark'}
+                onValueChange={v => setTheme(v ? 'dark' : 'light')}
+                trackColor={{ false: '#d1d5db', true: C.green }}
+                thumbColor="#ffffff"
+                ios_backgroundColor="#d1d5db"
+              />
+              <Text style={s.themeIcon}>🌙</Text>
             </View>
-            <Label>Destination</Label>
-            <FieldInput value={destination} onChangeText={setDestination} placeholder='e.g. 1600 Pennsylvania Ave, Washington DC' />
-          </Card>
+            <TouchableOpacity style={s.settingsBtn} onPress={() => setSettingsOpen(true)} activeOpacity={0.7}>
+              <Text style={s.settingsBtnText}>⚙︎</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
 
-          {pipelineStarted && !allStepsDone && (
-            <>
-              <Text style={s.sectionLabel}>Analysis Pipeline</Text>
+        <TouchableOpacity style={s.configSummary} onPress={() => setSettingsOpen(true)} activeOpacity={0.7}>
+          <Text style={s.configSummaryText}>
+            {`Save ${minTimeSaved || 0}+ min · pay up to $${maxToll || 0} · ${(URGENCY_OPTIONS.find(o => o.value === urgencyLevel) ?? URGENCY_OPTIONS[1]).label} urgency`}
+          </Text>
+          <Text style={s.configSummaryEdit}>Edit</Text>
+        </TouchableOpacity>
 
-              <StepCard num={1} title="Identify current road" state={stepStates[1]}>
-                {roadInfo && (
-                  <View>
-                    <View style={s.roadBadge}>
-                      <View style={s.roadDot} />
-                      <Text style={s.roadBadgeText}>{roadInfo.roadName}</Text>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
+
+            <Card>
+              <CardTitle>Route</CardTitle>
+              <Label>Starting Location</Label>
+              <View style={s.locRow}>
+                <View style={{ flex: 1 }}>
+                  <FieldInput
+                    value={locationText}
+                    onChangeText={t => { setLocationText(t); setLocationMode('manual'); }}
+                    placeholder='e.g. 1600 Pennsylvania Ave, Washington DC'
+                  />
+                </View>
+                <TouchableOpacity style={s.locBtn} onPress={detectLocation} activeOpacity={0.8}>
+                  <Text style={s.locBtnIcon}>📍</Text>
+                </TouchableOpacity>
+              </View>
+              <Label>Destination</Label>
+              <FieldInput value={destination} onChangeText={setDestination} placeholder='e.g. 1600 Pennsylvania Ave, Washington DC' />
+            </Card>
+
+            {pipelineStarted && !allStepsDone && (
+              <>
+                <Text style={s.sectionLabel}>Analysis Pipeline</Text>
+
+                <StepCard num={1} title="Identify current road" state={stepStates[1]}>
+                  {roadInfo && (
+                    <View>
+                      <View style={s.roadBadge}>
+                        <View style={s.roadDot} />
+                        <Text style={s.roadBadgeText}>{roadInfo.roadName}</Text>
+                      </View>
+                      <Text style={s.roadFormatted}>{roadInfo.formatted}</Text>
                     </View>
-                    <Text style={s.roadFormatted}>{roadInfo.formatted}</Text>
+                  )}
+                </StepCard>
+
+                <Connector />
+
+                <StepCard num={2} title="Fetch toll vs free routes" state={stepStates[2]}>
+                  <View style={s.routesGrid}>
+                    {displayList.map(({ route, isToll, isAlt }, i) => (
+                      <RouteCard key={i} route={route} isToll={isToll} isAlt={isAlt} />
+                    ))}
                   </View>
-                )}
-              </StepCard>
+                  {noFreeRoute && (
+                    <Text style={s.noFreeNote}>No toll-free route exists, comparing toll options.</Text>
+                  )}
+                </StepCard>
 
-              <Connector />
+                <Connector />
 
-              <StepCard num={2} title="Fetch toll vs free routes" state={stepStates[2]}>
+                <StepCard num={3} title="Calculate cost efficiency verdict" state={stepStates[3]}>
+                  {verdict && <VerdictCard verdict={verdict} />}
+                </StepCard>
+              </>
+            )}
+
+            {allStepsDone && (
+              <>
+                <Text style={s.sectionLabel}>Result</Text>
+
+                <View style={s.compactSummary}>
+                  <View style={s.compactSummaryRow}>
+                    <View style={s.roadDot} />
+                    <Text style={s.compactSummaryText}>{roadInfo?.roadName}</Text>
+                  </View>
+                  <Text style={s.compactSummarySub}>{roadInfo?.formatted}</Text>
+                </View>
+
                 <View style={s.routesGrid}>
                   {displayList.map(({ route, isToll, isAlt }, i) => (
                     <RouteCard key={i} route={route} isToll={isToll} isAlt={isAlt} />
@@ -660,217 +752,197 @@ export default function App() {
                 {noFreeRoute && (
                   <Text style={s.noFreeNote}>No toll-free route exists, comparing toll options.</Text>
                 )}
-              </StepCard>
 
-              <Connector />
+                {verdict && <View style={{ marginTop: 12 }}><VerdictCard verdict={verdict} /></View>}
+              </>
+            )}
 
-              <StepCard num={3} title="Calculate cost efficiency verdict" state={stepStates[3]}>
-                {verdict && <VerdictCard verdict={verdict} />}
-              </StepCard>
-            </>
-          )}
-
-          {allStepsDone && (
-            <>
-              <Text style={s.sectionLabel}>Result</Text>
-
-              <View style={s.compactSummary}>
-                <View style={s.compactSummaryRow}>
-                  <View style={s.roadDot} />
-                  <Text style={s.compactSummaryText}>{roadInfo?.roadName}</Text>
-                </View>
-                <Text style={s.compactSummarySub}>{roadInfo?.formatted}</Text>
+            {notificationSent && (
+              <View style={s.notifBar}>
+                <Text style={s.notifText}>🔔 Advisory notification sent</Text>
               </View>
+            )}
 
-              <View style={s.routesGrid}>
-                {displayList.map(({ route, isToll, isAlt }, i) => (
-                  <RouteCard key={i} route={route} isToll={isToll} isAlt={isAlt} />
-                ))}
+            {geofenceArmed && (
+              <View style={s.geofenceBar}>
+                <Text style={s.geofenceText}>📍 Watching for decision point. Notification fires automatically as you approach</Text>
               </View>
-              {noFreeRoute && (
-                <Text style={s.noFreeNote}>No toll-free route exists, comparing toll options.</Text>
-              )}
+            )}
 
-              {verdict && <View style={{ marginTop: 12 }}><VerdictCard verdict={verdict} /></View>}
-            </>
-          )}
+            {error ? (
+              <View style={s.errorBar}>
+                <Text style={s.errorText}>⚠ {error}</Text>
+              </View>
+            ) : null}
 
-          {notificationSent && (
-            <View style={s.notifBar}>
-              <Text style={s.notifText}>🔔 Advisory notification sent</Text>
-            </View>
-          )}
-
-          {geofenceArmed && (
-            <View style={s.geofenceBar}>
-              <Text style={s.geofenceText}>📍 Watching for decision point. Notification fires automatically as you approach</Text>
-            </View>
-          )}
-
-          {error ? (
-            <View style={s.errorBar}>
-              <Text style={s.errorText}>⚠ {error}</Text>
-            </View>
-          ) : null}
-
-          <View style={s.btnRow}>
-            <TouchableOpacity
-              style={[s.primaryBtn, analysing && s.btnDisabled]}
-              onPress={runAnalysis}
-              disabled={analysing}
-              activeOpacity={0.8}
-            >
-              {analysing
-                ? <ActivityIndicator color="#000" />
-                : <Text style={s.primaryBtnText}>Analyze Route</Text>
-              }
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ height: 40 }} />
-        </ScrollView>
-      </KeyboardAvoidingView>
-
-      <Modal
-        visible={settingsOpen}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setSettingsOpen(false)}
-      >
-        <View style={s.modalOverlay}>
-          <View style={s.modalPanel}>
-            <View style={s.modalHeader}>
-              <Text style={s.modalTitle}>Settings</Text>
-              <TouchableOpacity onPress={() => setSettingsOpen(false)} activeOpacity={0.7}>
-                <Text style={s.modalClose}>✕</Text>
+            <View style={s.btnRow}>
+              <TouchableOpacity
+                style={[s.primaryBtn, analysing && s.btnDisabled]}
+                onPress={runAnalysis}
+                disabled={analysing}
+                activeOpacity={0.8}
+              >
+                {analysing
+                  ? <ActivityIndicator color="#000" />
+                  : <Text style={s.primaryBtnText}>Analyse Route</Text>
+                }
               </TouchableOpacity>
             </View>
-            <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
-              <Card>
-                <CardTitle>Configuration</CardTitle>
 
-                <Label>Minimum time saved to take the toll</Label>
-                <Text style={s.hint}>Only recommend the toll road if it saves at least this many minutes</Text>
-                <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </KeyboardAvoidingView>
 
-                <Label>Most you're willing to pay in tolls</Label>
-                <Text style={s.hint}>Won't recommend a toll that costs more than this</Text>
-                <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="10" />
+        <Modal
+          visible={settingsOpen}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setSettingsOpen(false)}
+        >
+          <View style={s.modalOverlay}>
+            <View style={s.modalPanel}>
+              <View style={s.modalHeader}>
+                <Text style={s.modalTitle}>Settings</Text>
+                <TouchableOpacity onPress={() => setSettingsOpen(false)} activeOpacity={0.7}>
+                  <Text style={s.modalClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+                <Card>
+                  <CardTitle>Configuration</CardTitle>
 
-                <Label>Your annual salary</Label>
-                <Text style={s.hint}>Used to estimate what your time is worth per minute</Text>
-                <FieldInput value={annualSalary} onChangeText={setAnnualSalary} keyboardType="numeric" placeholder="50000" />
+                  <Label>Minimum time saved to take the toll</Label>
+                  <Text style={s.hint}>Only recommend the toll road if it saves at least this many minutes</Text>
+                  <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
 
-                <View style={s.divider} />
-                <UrgencyPicker value={urgencyLevel} onChange={setUrgencyLevel} />
-              </Card>
-            </ScrollView>
+                  <Label>Most you're willing to pay in tolls</Label>
+                  <Text style={s.hint}>Won't recommend a toll that costs more than this</Text>
+                  <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="10" />
+
+                  <Label>Your annual salary</Label>
+                  <Text style={s.hint}>Used to estimate what your time is worth per minute</Text>
+                  <FieldInput value={annualSalary} onChangeText={setAnnualSalary} keyboardType="numeric" placeholder="50000" />
+
+                  <View style={s.divider} />
+                  <UrgencyPicker value={urgencyLevel} onChange={setUrgencyLevel} />
+                </Card>
+              </ScrollView>
+            </View>
           </View>
-        </View>
-      </Modal>
-    </SafeAreaView>
+        </Modal>
+      </SafeAreaView>
+    </ThemeContext.Provider>
   );
 }
 
-const s = StyleSheet.create({
-  safe:           { flex: 1, backgroundColor: C.black },
-  topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 48, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
-  topbarRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  logoText:       { fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: 2 },
-  logoSub:        { fontSize: 10, color: C.muted, letterSpacing: 1.5, marginTop: 2 },
+// ── Stylesheet factory ──────────────────────────────────────────────────────
+// Takes the active colour palette and returns a themed stylesheet. Called
+// once per theme change (memoised in App) rather than on every render.
+function makeStyles(C) {
+  return StyleSheet.create({
+    safe:           { flex: 1, backgroundColor: C.black },
+    topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 56, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+    topbarRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    logoText:       { fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: 2 },
+    logoSub:        { fontSize: 10, color: C.muted, letterSpacing: 1.5, marginTop: 2 },
 
-  settingsBtn:     { width: 34, height: 34, borderRadius: 8, backgroundColor: C.panel, borderWidth: 1, borderColor: C.border2, alignItems: 'center', justifyContent: 'center' },
-  settingsBtnText: { fontSize: 16, color: C.text },
+    topbarRight:     { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    themeToggle:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    themeIcon:       { fontSize: 12 },
 
-  configSummary:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: C.dark, paddingHorizontal: 20, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border },
-  configSummaryText: { fontSize: 11, color: C.muted, flex: 1, marginRight: 8 },
-  configSummaryEdit: { fontSize: 11, color: C.green, fontWeight: '600' },
+    settingsBtn:     { width: 34, height: 34, borderRadius: 8, backgroundColor: C.panel, borderWidth: 1, borderColor: C.border2, alignItems: 'center', justifyContent: 'center' },
+    settingsBtnText: { fontSize: 16, color: C.text },
 
-  modalOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalPanel:     { backgroundColor: C.dark, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
-  modalHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  modalTitle:     { fontSize: 16, fontWeight: '700', color: C.text },
-  modalClose:     { fontSize: 18, color: C.muted, padding: 4 },
+    configSummary:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: C.dark, paddingHorizontal: 20, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border },
+    configSummaryText: { fontSize: 11, color: C.muted, flex: 1, marginRight: 8 },
+    configSummaryEdit: { fontSize: 11, color: C.green, fontWeight: '600' },
 
-  scroll:         { flex: 1 },
-  scrollContent:  { padding: 16 },
+    modalOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+    modalPanel:     { backgroundColor: C.dark, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
+    modalHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+    modalTitle:     { fontSize: 16, fontWeight: '700', color: C.text },
+    modalClose:     { fontSize: 18, color: C.muted, padding: 4 },
 
-  card:           { backgroundColor: C.panel, borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 16, marginBottom: 12 },
-  cardTitle:      { fontSize: 11, fontWeight: '700', color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 14 },
+    scroll:         { flex: 1 },
+    scrollContent:  { padding: 16 },
 
-  label:          { fontSize: 11, color: C.muted, marginBottom: 4, marginTop: 10, letterSpacing: 0.5 },
-  hint:           { fontSize: 11, color: C.muted, opacity: 0.7, marginBottom: 6, lineHeight: 14 },
-  input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13 },
-  inputFocused:   { borderColor: C.border2 },
-  inputDisabled:  { opacity: 0.5 },
+    card:           { backgroundColor: C.panel, borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 16, marginBottom: 12 },
+    cardTitle:      { fontSize: 11, fontWeight: '700', color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 14 },
 
-  locRow:         { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
-  locBtn:         { width: 42, height: 42, backgroundColor: C.border2, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  locBtnIcon:     { fontSize: 16 },
+    label:          { fontSize: 11, color: C.muted, marginBottom: 4, marginTop: 10, letterSpacing: 0.5 },
+    hint:           { fontSize: 11, color: C.muted, opacity: 0.7, marginBottom: 6, lineHeight: 14 },
+    input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13 },
+    inputFocused:   { borderColor: C.border2 },
+    inputDisabled:  { opacity: 0.5 },
 
-  divider:        { height: 1, backgroundColor: C.border, marginTop: 16, marginBottom: 4 },
+    locRow:         { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
+    locBtn:         { width: 42, height: 42, backgroundColor: C.border2, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+    locBtnIcon:     { fontSize: 16 },
 
-  toggleLabel:    { fontSize: 13, color: C.text, fontWeight: '600' },
-  toggleSub:      { fontSize: 11, color: C.muted, marginTop: 2 },
+    divider:        { height: 1, backgroundColor: C.border, marginTop: 16, marginBottom: 4 },
 
-  passGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
-  passChip:       { borderWidth: 1, borderColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
-  passChipActive: { borderColor: C.green, backgroundColor: C.greenD },
-  passChipText:   { fontSize: 11, color: C.muted },
-  passChipTextActive: { color: C.green, fontWeight: '600' },
+    toggleLabel:    { fontSize: 13, color: C.text, fontWeight: '600' },
+    toggleSub:      { fontSize: 11, color: C.muted, marginTop: 2 },
 
-  sectionLabel:   { fontSize: 10, color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
+    passGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+    passChip:       { borderWidth: 1, borderColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+    passChipActive: { borderColor: C.green, backgroundColor: C.greenD },
+    passChipText:   { fontSize: 11, color: C.muted },
+    passChipTextActive: { color: C.green, fontWeight: '600' },
 
-  compactSummary:     { marginBottom: 10 },
-  compactSummaryRow:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  compactSummaryText: { fontSize: 13, color: C.text, fontWeight: '600' },
-  compactSummarySub:  { fontSize: 11, color: C.muted, marginTop: 2, marginLeft: 13 },
+    sectionLabel:   { fontSize: 10, color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
 
-  step:           { backgroundColor: C.panel, borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 2 },
-  stepRow:        { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  stepIcon:       { width: 32, height: 32, borderRadius: 8, backgroundColor: C.black, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
-  stepIconText:   { fontSize: 10, fontWeight: '700', color: C.muted },
-  stepTitle:      { flex: 1, fontSize: 13, fontWeight: '600', color: C.text },
-  stepBody:       { marginTop: 12 },
-  pill:           { borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  pillText:       { fontSize: 9, fontWeight: '600', letterSpacing: 0.5 },
+    compactSummary:     { marginBottom: 10 },
+    compactSummaryRow:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    compactSummaryText: { fontSize: 13, color: C.text, fontWeight: '600' },
+    compactSummarySub:  { fontSize: 11, color: C.muted, marginTop: 2, marginLeft: 13 },
 
-  connector:      { width: 1, height: 16, backgroundColor: C.border, marginLeft: 30, marginVertical: 1 },
+    step:           { backgroundColor: C.panel, borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 2 },
+    stepRow:        { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    stepIcon:       { width: 32, height: 32, borderRadius: 8, backgroundColor: C.black, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
+    stepIconText:   { fontSize: 10, fontWeight: '700', color: C.muted },
+    stepTitle:      { flex: 1, fontSize: 13, fontWeight: '600', color: C.text },
+    stepBody:       { marginTop: 12 },
+    pill:           { borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+    pillText:       { fontSize: 9, fontWeight: '600', letterSpacing: 0.5 },
 
-  roadBadge:      { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start', marginBottom: 6 },
-  roadDot:        { width: 7, height: 7, borderRadius: 4, backgroundColor: C.green },
-  roadBadgeText:  { fontSize: 12, color: C.text },
-  roadFormatted:  { fontSize: 12, color: C.muted, marginTop: 2 },
+    connector:      { width: 1, height: 16, backgroundColor: C.border, marginLeft: 30, marginVertical: 1 },
 
-  routesGrid:     { flexDirection: 'row', gap: 8 },
-  routeCard:      { flex: 1, borderWidth: 1, borderRadius: 10, padding: 10 },
-  routeType:      { fontSize: 9, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
-  routeName:      { fontSize: 12, fontWeight: '600', color: C.text, marginBottom: 8, lineHeight: 16 },
-  routeStat:      { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: C.border },
-  routeStatLast:  { borderBottomWidth: 0 },
-  routeStatLabel: { fontSize: 11, color: C.muted },
-  routeStatValue: { fontSize: 11, color: C.text, fontWeight: '500' },
-  noFreeNote:     { fontSize: 11, color: C.amber, marginTop: 8 },
+    roadBadge:      { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start', marginBottom: 6 },
+    roadDot:        { width: 7, height: 7, borderRadius: 4, backgroundColor: C.green },
+    roadBadgeText:  { fontSize: 12, color: C.text },
+    roadFormatted:  { fontSize: 12, color: C.muted, marginTop: 2 },
 
-  verdictCard:      { borderWidth: 1, borderRadius: 10, padding: 14 },
-  verdictLabel:     { fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
-  verdictText:      { fontSize: 13, color: C.text, lineHeight: 20, marginBottom: 12 },
-  verdictStats:     { flexDirection: 'row', gap: 6 },
-  verdictStat:      { flex: 1, alignItems: 'center', backgroundColor: C.black, borderRadius: 8, padding: 10 },
-  verdictStatNum:   { fontSize: 20, fontWeight: '800', marginBottom: 4 },
-  verdictStatLabel: { fontSize: 9, color: C.muted, letterSpacing: 1 },
+    routesGrid:     { flexDirection: 'row', gap: 8 },
+    routeCard:      { flex: 1, borderWidth: 1, borderRadius: 10, padding: 10 },
+    routeType:      { fontSize: 9, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
+    routeName:      { fontSize: 12, fontWeight: '600', color: C.text, marginBottom: 8, lineHeight: 16 },
+    routeStat:      { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: C.border },
+    routeStatLast:  { borderBottomWidth: 0 },
+    routeStatLabel: { fontSize: 11, color: C.muted },
+    routeStatValue: { fontSize: 11, color: C.text, fontWeight: '500' },
+    noFreeNote:     { fontSize: 11, color: C.amber, marginTop: 8 },
 
-  notifBar:       { backgroundColor: 'rgba(34,197,94,0.1)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.3)', borderRadius: 8, padding: 12, marginTop: 12 },
-  notifText:      { fontSize: 12, color: C.green, textAlign: 'center' },
+    verdictCard:      { borderWidth: 1, borderRadius: 10, padding: 14 },
+    verdictLabel:     { fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
+    verdictText:      { fontSize: 13, color: C.text, lineHeight: 20, marginBottom: 12 },
+    verdictStats:     { flexDirection: 'row', gap: 6 },
+    verdictStat:      { flex: 1, alignItems: 'center', backgroundColor: C.black, borderRadius: 8, padding: 10 },
+    verdictStatNum:   { fontSize: 20, fontWeight: '800', marginBottom: 4 },
+    verdictStatLabel: { fontSize: 9, color: C.muted, letterSpacing: 1 },
 
-  geofenceBar:    { backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.3)', borderRadius: 8, padding: 12, marginTop: 8 },
-  geofenceText:   { fontSize: 12, color: C.blue, textAlign: 'center' },
+    notifBar:       { backgroundColor: 'rgba(34,197,94,0.1)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.3)', borderRadius: 8, padding: 12, marginTop: 12 },
+    notifText:      { fontSize: 12, color: C.green, textAlign: 'center' },
 
-  errorBar:       { backgroundColor: C.redD, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)', borderRadius: 8, padding: 12, marginTop: 12 },
-  errorText:      { fontSize: 12, color: C.red },
+    geofenceBar:    { backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.3)', borderRadius: 8, padding: 12, marginTop: 8 },
+    geofenceText:   { fontSize: 12, color: C.blue, textAlign: 'center' },
 
-  btnRow:         { marginTop: 16 },
-  primaryBtn:     { backgroundColor: C.green, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
-  primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#000', letterSpacing: 0.5 },
-  btnDisabled:    { opacity: 0.5 },
-});
+    errorBar:       { backgroundColor: C.redD, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)', borderRadius: 8, padding: 12, marginTop: 12 },
+    errorText:      { fontSize: 12, color: C.red },
+
+    btnRow:         { marginTop: 16 },
+    primaryBtn:     { backgroundColor: C.green, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+    primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#000', letterSpacing: 0.5 },
+    btnDisabled:    { opacity: 0.5 },
+  });
+}
