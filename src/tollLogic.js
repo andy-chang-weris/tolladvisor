@@ -1,9 +1,9 @@
 // src/tollLogic.js
 
 export const URGENCY_OPTIONS = [
-  { label: 'Low', value: 'low', weight: 0.5 },
-  { label: 'Medium', value: 'med', weight: 1.0 },
-  { label: 'High', value: 'high', weight: 1.5 },
+  { label: 'Low', value: 'low', weight: 0.5, description: "I've got time to spare" },
+  { label: 'Medium', value: 'med', weight: 1.0, description: 'Normal trip, no rush' },
+  { label: 'High', value: 'high', weight: 1.5, description: 'Every minute counts' },
 ];
 
 export function urgencyWeight(level) {
@@ -343,20 +343,6 @@ function walkBackByDistance(pts, targetIdx, leadMetres) {
 }
 
 export function getDecisionPoint(tollRoute, freeRoute, originLat, originLng, debug = false) {
-  // Primary method: use Google's own "Toll road" instruction marker to find
-  // the step where tolling begins, then decide the anchor point:
-  //   - If the step immediately before the toll marker is itself a genuine
-  //     ramp/turn maneuver, anchor there (that's the real physical decision
-  //     point the driver needs to react to).
-  //   - Otherwise (e.g. the previous step is just a "continue straight"
-  //     stretch of ordinary road), anchor on the toll-marked step itself,
-  //     to avoid landing the decision point at an arbitrary point along a
-  //     long straight highway segment.
-  // Then walk back a fixed distance (not a fixed number of steps) along the
-  // actual road geometry from that anchor for lead time. This is robust to
-  // routes that briefly diverge on local streets and later reconverge
-  // (which breaks pure polyline-proximity matching against the free route),
-  // and to steps of very different lengths (which breaks step counting).
   if (tollRoute) {
     const tollEntryIdx = findTollEntryStepIndex(tollRoute);
     if (debug) console.log(`tollEntryStepIndex=${tollEntryIdx}`);
@@ -386,8 +372,6 @@ export function getDecisionPoint(tollRoute, freeRoute, originLat, originLng, deb
     }
   }
 
-  // Fallback: old polyline-proximity method, for cases with no toll-road
-  // instruction marker (e.g. both routes tolled, or Google didn't label it).
   if (tollRoute && freeRoute) {
     const tollEncoded = tollRoute.polyline?.encodedPolyline;
     const freeEncoded = freeRoute.polyline?.encodedPolyline;

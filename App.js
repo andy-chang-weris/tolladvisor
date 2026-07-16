@@ -18,16 +18,8 @@ import {
   getDecisionPoint,
 } from './src/tollLogic';
 
-// ── Google API key ──────────────────────────────────────────────────────────
-// Read from the EXPO_PUBLIC_ prefixed env var so it's baked in at build time
-// instead of being typed into the UI. Put the real value in a local .env
-// file (gitignored): EXPO_PUBLIC_GOOGLE_API_KEY=AIza...
-// Note: EXPO_PUBLIC_ vars are inlined into the client bundle, so this is
-// convenience, not secret storage. For a truly hidden key, proxy Google
-// calls through your own backend instead.
 const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_API_KEY ?? '';
 
-// ── Notification handler ───────────────────────────────────────────────────
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -36,7 +28,6 @@ Notifications.setNotificationHandler({
   }),
 });
 
-// ── Geofence task ──────────────────────────────────────────────────────────
 const GEOFENCE_TASK = 'TOLL_DECISION_POINT';
 
 let _tripContext = null;
@@ -65,9 +56,6 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   }
 });
 
-// ── Colour tokens ──────────────────────────────────────────────────────────
-// Two palettes, keyed by semantic role so components don't need to know
-// which theme is active — they just read from whichever palette is current.
 const COLORS = {
   dark: {
     black:   '#0a0a0a',
@@ -107,13 +95,9 @@ const COLORS = {
   },
 };
 
-// ── Theme context ───────────────────────────────────────────────────────────
-// Lets every component below read the active colour palette and its matching
-// stylesheet without threading props through every layer.
 const ThemeContext = createContext({ theme: 'dark', C: COLORS.dark, s: makeStyles(COLORS.dark) });
 function useTheme() { return useContext(ThemeContext); }
 
-// ── Notification helpers ───────────────────────────────────────────────────
 async function requestNotificationPermission() {
   const { status } = await Notifications.requestPermissionsAsync();
   return status === 'granted';
@@ -137,7 +121,6 @@ async function sendVerdictNotification(verdict, destination) {
   return true;
 }
 
-// ── API functions ──────────────────────────────────────────────────────────
 async function snapToRoad(lat, lng, googleKey) {
   const url  = `https://roads.googleapis.com/v1/snapToRoads?path=${lat},${lng}&interpolate=false&key=${googleKey}`;
   const res  = await fetch(url);
@@ -224,7 +207,6 @@ async function getRoutes(originLat, originLng, destination, googleKey) {
   return routes;
 }
 
-// ── Reusable UI components ─────────────────────────────────────────────────
 function Label({ children }) {
   const { s } = useTheme();
   return <Text style={s.label}>{children}</Text>;
@@ -259,9 +241,6 @@ function CardTitle({ children }) {
   return <Text style={s.cardTitle}>{children}</Text>;
 }
 
-// ── UrgencyPicker ──────────────────────────────────────────────────────────
-// Three-way selector for how time-critical this trip is. The selected level's
-// weight scales the value of travel time saved in the verdict calculation.
 function UrgencyPicker({ value, onChange }) {
   const { s } = useTheme();
   const current = URGENCY_OPTIONS.find(o => o.value === value) ?? URGENCY_OPTIONS[1];
@@ -270,7 +249,7 @@ function UrgencyPicker({ value, onChange }) {
       <View style={{ marginBottom: 2 }}>
         <Text style={s.toggleLabel}>Trip urgency</Text>
         <Text style={s.toggleSub}>
-          {`${current.label} · ${current.weight}x on value of time saved`}
+          {`${current.description} — weighs your time saved ${current.weight}x`}
         </Text>
       </View>
       <View style={s.passGrid}>
@@ -284,8 +263,13 @@ function UrgencyPicker({ value, onChange }) {
               activeOpacity={0.7}
             >
               <Text style={[s.passChipText, active && s.passChipTextActive]}>
-                {`${opt.label} (${opt.weight}x)`}
+                {opt.label}
               </Text>
+              {active && (
+                <Text style={[s.passChipSub, s.passChipTextActive]}>
+                  {opt.description}
+                </Text>
+              )}
             </TouchableOpacity>
           );
         })}
@@ -392,7 +376,6 @@ function VerdictCard({ verdict }) {
   );
 }
 
-// ── Main App ───────────────────────────────────────────────────────────────
 export default function App() {
   const [destination,      setDestination]      = useState('');
   const [minTimeSaved,     setMinTimeSaved]     = useState('10');
@@ -835,9 +818,6 @@ export default function App() {
   );
 }
 
-// ── Stylesheet factory ──────────────────────────────────────────────────────
-// Takes the active colour palette and returns a themed stylesheet. Called
-// once per theme change (memoised in App) rather than on every render.
 function makeStyles(C) {
   return StyleSheet.create({
     safe:           { flex: 1, backgroundColor: C.black },
@@ -889,6 +869,7 @@ function makeStyles(C) {
     passChipActive: { borderColor: C.green, backgroundColor: C.greenD },
     passChipText:   { fontSize: 11, color: C.muted },
     passChipTextActive: { color: C.green, fontWeight: '600' },
+    passChipSub:    { fontSize: 9, marginTop: 1 },
 
     sectionLabel:   { fontSize: 10, color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
 
