@@ -382,6 +382,9 @@ export default function App() {
     setStepStates(prev => ({ ...prev, [n]: state }));
   }, []);
 
+  const pipelineStarted = stepStates[1] !== 'waiting';
+  const allStepsDone     = stepStates[1] === 'done' && stepStates[2] === 'done' && stepStates[3] === 'done';
+
   useEffect(() => {
     async function requestStartupPermissions() {
       const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
@@ -601,6 +604,13 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
+      <TouchableOpacity style={s.configSummary} onPress={() => setSettingsOpen(true)} activeOpacity={0.7}>
+        <Text style={s.configSummaryText}>
+          {`${minTimeSaved || 0}min saved min · $${maxToll || 0} max toll · ${(URGENCY_OPTIONS.find(o => o.value === urgencyLevel) ?? URGENCY_OPTIONS[1]).label} urgency`}
+        </Text>
+        <Text style={s.configSummaryEdit}>Edit</Text>
+      </TouchableOpacity>
+
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
 
@@ -616,46 +626,74 @@ export default function App() {
                 />
               </View>
               <TouchableOpacity style={s.locBtn} onPress={detectLocation} activeOpacity={0.8}>
-                <Text style={s.locBtnText}>📍 Detect</Text>
+                <Text style={s.locBtnIcon}>📍</Text>
               </TouchableOpacity>
             </View>
             <Label>Destination</Label>
             <FieldInput value={destination} onChangeText={setDestination} placeholder='e.g. 1600 Pennsylvania Ave, Washington DC' />
           </Card>
 
-          <Text style={s.sectionLabel}>Analysis Pipeline</Text>
+          {pipelineStarted && !allStepsDone && (
+            <>
+              <Text style={s.sectionLabel}>Analysis Pipeline</Text>
 
-          <StepCard num={1} title="Identify current road" state={stepStates[1]}>
-            {roadInfo && (
-              <View>
-                <View style={s.roadBadge}>
-                  <View style={s.roadDot} />
-                  <Text style={s.roadBadgeText}>{roadInfo.roadName}</Text>
+              <StepCard num={1} title="Identify current road" state={stepStates[1]}>
+                {roadInfo && (
+                  <View>
+                    <View style={s.roadBadge}>
+                      <View style={s.roadDot} />
+                      <Text style={s.roadBadgeText}>{roadInfo.roadName}</Text>
+                    </View>
+                    <Text style={s.roadFormatted}>{roadInfo.formatted}</Text>
+                  </View>
+                )}
+              </StepCard>
+
+              <Connector />
+
+              <StepCard num={2} title="Fetch toll vs free routes" state={stepStates[2]}>
+                <View style={s.routesGrid}>
+                  {displayList.map(({ route, isToll, isAlt }, i) => (
+                    <RouteCard key={i} route={route} isToll={isToll} isAlt={isAlt} />
+                  ))}
                 </View>
-                <Text style={s.roadFormatted}>{roadInfo.formatted}</Text>
-                <Text style={s.roadMethod}>via {roadInfo.method}</Text>
+                {noFreeRoute && (
+                  <Text style={s.noFreeNote}>No toll-free route exists, comparing toll options.</Text>
+                )}
+              </StepCard>
+
+              <Connector />
+
+              <StepCard num={3} title="Calculate cost efficiency verdict" state={stepStates[3]}>
+                {verdict && <VerdictCard verdict={verdict} />}
+              </StepCard>
+            </>
+          )}
+
+          {allStepsDone && (
+            <>
+              <Text style={s.sectionLabel}>Result</Text>
+
+              <View style={s.compactSummary}>
+                <View style={s.compactSummaryRow}>
+                  <View style={s.roadDot} />
+                  <Text style={s.compactSummaryText}>{roadInfo?.roadName}</Text>
+                </View>
+                <Text style={s.compactSummarySub}>{roadInfo?.formatted}</Text>
               </View>
-            )}
-          </StepCard>
 
-          <Connector />
+              <View style={s.routesGrid}>
+                {displayList.map(({ route, isToll, isAlt }, i) => (
+                  <RouteCard key={i} route={route} isToll={isToll} isAlt={isAlt} />
+                ))}
+              </View>
+              {noFreeRoute && (
+                <Text style={s.noFreeNote}>No toll-free route exists, comparing toll options.</Text>
+              )}
 
-          <StepCard num={2} title="Fetch toll vs free routes" state={stepStates[2]}>
-            <View style={s.routesGrid}>
-              {displayList.map(({ route, isToll, isAlt }, i) => (
-                <RouteCard key={i} route={route} isToll={isToll} isAlt={isAlt} />
-              ))}
-            </View>
-            {noFreeRoute && (
-              <Text style={s.noFreeNote}>No toll-free route exists, comparing toll options.</Text>
-            )}
-          </StepCard>
-
-          <Connector />
-
-          <StepCard num={3} title="Calculate cost efficiency verdict" state={stepStates[3]}>
-            {verdict && <VerdictCard verdict={verdict} />}
-          </StepCard>
+              {verdict && <View style={{ marginTop: 12 }}><VerdictCard verdict={verdict} /></View>}
+            </>
+          )}
 
           {notificationSent && (
             <View style={s.notifBar}>
@@ -730,13 +768,17 @@ export default function App() {
 
 const s = StyleSheet.create({
   safe:           { flex: 1, backgroundColor: C.black },
-  topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 36, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+  topbar:         { backgroundColor: C.dark, paddingHorizontal: 20, paddingTop: 48, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
   topbarRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   logoText:       { fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: 2 },
   logoSub:        { fontSize: 10, color: C.muted, letterSpacing: 1.5, marginTop: 2 },
 
   settingsBtn:     { width: 34, height: 34, borderRadius: 8, backgroundColor: C.panel, borderWidth: 1, borderColor: C.border2, alignItems: 'center', justifyContent: 'center' },
   settingsBtnText: { fontSize: 16, color: C.text },
+
+  configSummary:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: C.dark, paddingHorizontal: 20, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border },
+  configSummaryText: { fontSize: 11, color: C.muted, flex: 1, marginRight: 8 },
+  configSummaryEdit: { fontSize: 11, color: C.green, fontWeight: '600' },
 
   modalOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalPanel:     { backgroundColor: C.dark, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
@@ -756,8 +798,8 @@ const s = StyleSheet.create({
   inputDisabled:  { opacity: 0.5 },
 
   locRow:         { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
-  locBtn:         { backgroundColor: C.border2, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center' },
-  locBtnText:     { color: C.text, fontSize: 12, fontWeight: '600' },
+  locBtn:         { width: 42, height: 42, backgroundColor: C.border2, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  locBtnIcon:     { fontSize: 16 },
 
   divider:        { height: 1, backgroundColor: C.border, marginTop: 16, marginBottom: 4 },
 
@@ -771,6 +813,11 @@ const s = StyleSheet.create({
   passChipTextActive: { color: C.green, fontWeight: '600' },
 
   sectionLabel:   { fontSize: 10, color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
+
+  compactSummary:     { marginBottom: 10 },
+  compactSummaryRow:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  compactSummaryText: { fontSize: 13, color: C.text, fontWeight: '600' },
+  compactSummarySub:  { fontSize: 11, color: C.muted, marginTop: 2, marginLeft: 13 },
 
   step:           { backgroundColor: C.panel, borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 2 },
   stepRow:        { flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -787,7 +834,6 @@ const s = StyleSheet.create({
   roadDot:        { width: 7, height: 7, borderRadius: 4, backgroundColor: C.green },
   roadBadgeText:  { fontSize: 12, color: C.text },
   roadFormatted:  { fontSize: 12, color: C.muted, marginTop: 2 },
-  roadMethod:     { fontSize: 10, color: C.muted, opacity: 0.7, marginTop: 3 },
 
   routesGrid:     { flexDirection: 'row', gap: 8 },
   routeCard:      { flex: 1, borderWidth: 1, borderRadius: 10, padding: 10 },
