@@ -606,7 +606,7 @@ export default function App() {
 
       <TouchableOpacity style={s.configSummary} onPress={() => setSettingsOpen(true)} activeOpacity={0.7}>
         <Text style={s.configSummaryText}>
-          {`${minTimeSaved || 0}min saved min · $${maxToll || 0} max toll · ${(URGENCY_OPTIONS.find(o => o.value === urgencyLevel) ?? URGENCY_OPTIONS[1]).label} urgency`}
+          {`Save ${minTimeSaved || 0}+ min · pay up to $${maxToll || 0} · ${(URGENCY_OPTIONS.find(o => o.value === urgencyLevel) ?? URGENCY_OPTIONS[1]).label} urgency`}
         </Text>
         <Text style={s.configSummaryEdit}>Edit</Text>
       </TouchableOpacity>
@@ -722,7 +722,7 @@ export default function App() {
             >
               {analysing
                 ? <ActivityIndicator color="#000" />
-                : <Text style={s.primaryBtnText}>Analyse Route</Text>
+                : <Text style={s.primaryBtnText}>Analyze Route</Text>
               }
             </TouchableOpacity>
           </View>
@@ -748,11 +748,17 @@ export default function App() {
             <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
               <Card>
                 <CardTitle>Configuration</CardTitle>
-                <Label>Min time saved (minutes)</Label>
+
+                <Label>Minimum time saved to take the toll</Label>
+                <Text style={s.hint}>Only recommend the toll road if it saves at least this many minutes</Text>
                 <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
-                <Label>Max toll willing to pay ($)</Label>
+
+                <Label>Most you're willing to pay in tolls</Label>
+                <Text style={s.hint}>Won't recommend a toll that costs more than this</Text>
                 <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="10" />
-                <Label>Your annual salary ($ per year)</Label>
+
+                <Label>Your annual salary</Label>
+                <Text style={s.hint}>Used to estimate what your time is worth per minute</Text>
                 <FieldInput value={annualSalary} onChangeText={setAnnualSalary} keyboardType="numeric" placeholder="50000" />
 
                 <View style={s.divider} />
@@ -792,7 +798,8 @@ const s = StyleSheet.create({
   card:           { backgroundColor: C.panel, borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 16, marginBottom: 12 },
   cardTitle:      { fontSize: 11, fontWeight: '700', color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 14 },
 
-  label:          { fontSize: 11, color: C.muted, marginBottom: 6, marginTop: 10, letterSpacing: 0.5 },
+  label:          { fontSize: 11, color: C.muted, marginBottom: 4, marginTop: 10, letterSpacing: 0.5 },
+  hint:           { fontSize: 11, color: C.muted, opacity: 0.7, marginBottom: 6, lineHeight: 14 },
   input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13 },
   inputFocused:   { borderColor: C.border2 },
   inputDisabled:  { opacity: 0.5 },
