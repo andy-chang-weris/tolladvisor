@@ -897,7 +897,7 @@ export default function App() {
               >
                 {analysing
                   ? <ActivityIndicator color="#000" />
-                  : <Text style={s.primaryBtnText}>Analyse Route</Text>
+                  : <Text style={s.primaryBtnText}>Analyze Route</Text>
                 }
               </TouchableOpacity>
             </View>
