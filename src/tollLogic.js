@@ -206,7 +206,7 @@ export function calculateVerdict(
   };
 }
 
-function decodePolyline(encoded) {
+export function decodePolyline(encoded) {
   const points = [];
   let index = 0;
   let lat = 0;
@@ -260,6 +260,28 @@ function findTollEntryStepIndex(route) {
     if (/toll road/i.test(instr)) return i;
   }
   return -1;
+}
+
+// Maneuver types that represent an actual physical decision (turn/ramp/merge/fork),
+// as opposed to just continuing straight on the same road.
+// Confirmed against real Google Routes API responses on 2026-07-16 (two routes,
+// VA-267 E corridor): DEPART, TURN_LEFT, TURN_RIGHT, STRAIGHT, RAMP_RIGHT, MERGE,
+// NAME_CHANGE, and ROUNDABOUT_RIGHT all appeared and classified correctly by this
+// set. Only two routes tested so far, so an unseen maneuver value on a different
+// route is still possible; revisit this set if debug logging on a future route
+// ever prints a maneuver string not covered here.
+const RAMP_MANEUVER_TYPES = new Set([
+  'RAMP_LEFT', 'RAMP_RIGHT',
+  'TURN_LEFT', 'TURN_RIGHT', 'TURN_SLIGHT_LEFT', 'TURN_SLIGHT_RIGHT',
+  'TURN_SHARP_LEFT', 'TURN_SHARP_RIGHT',
+  'MERGE', 'FORK_LEFT', 'FORK_RIGHT',
+  'ROUNDABOUT_LEFT', 'ROUNDABOUT_RIGHT',
+  'ON_RAMP', 'OFF_RAMP',
+]);
+
+function isRampOrTurnStep(step) {
+  const maneuver = step?.navigationInstruction?.maneuver || '';
+  return RAMP_MANEUVER_TYPES.has(maneuver);
 }
 
 // Fixed lead distance, in metres, to back off from the actual ramp/turn
@@ -320,31 +342,42 @@ function walkBackByDistance(pts, targetIdx, leadMetres) {
   return { point: pts[0], actualMetresBack: accumulated, ranOutOfRoute: true };
 }
 
-function getDecisionPoint(tollRoute, freeRoute, originLat, originLng, debug = false) {
+export function getDecisionPoint(tollRoute, freeRoute, originLat, originLng, debug = false) {
   // Primary method: use Google's own "Toll road" instruction marker to find
-  // the ramp/turn step where tolling begins, locate that point on the toll
-  // route's polyline, then walk back a fixed distance (not a fixed number
-  // of steps) along the actual road geometry for lead time. This is robust
-  // to routes that briefly diverge on local streets and later reconverge
+  // the step where tolling begins, then decide the anchor point:
+  //   - If the step immediately before the toll marker is itself a genuine
+  //     ramp/turn maneuver, anchor there (that's the real physical decision
+  //     point the driver needs to react to).
+  //   - Otherwise (e.g. the previous step is just a "continue straight"
+  //     stretch of ordinary road), anchor on the toll-marked step itself,
+  //     to avoid landing the decision point at an arbitrary point along a
+  //     long straight highway segment.
+  // Then walk back a fixed distance (not a fixed number of steps) along the
+  // actual road geometry from that anchor for lead time. This is robust to
+  // routes that briefly diverge on local streets and later reconverge
   // (which breaks pure polyline-proximity matching against the free route),
   // and to steps of very different lengths (which breaks step counting).
   if (tollRoute) {
     const tollEntryIdx = findTollEntryStepIndex(tollRoute);
     if (debug) console.log(`tollEntryStepIndex=${tollEntryIdx}`);
 
-    if (tollEntryIdx > 0) {
+    if (tollEntryIdx >= 0) {
       const steps = tollRoute.legs?.[0]?.steps ?? [];
-      const rampStep = steps[tollEntryIdx - 1]; // the actual ramp/turn onto the toll road
-      const rampLoc = rampStep?.startLocation?.latLng;
+      const prevStep = tollEntryIdx > 0 ? steps[tollEntryIdx - 1] : null;
+      const tollStep = steps[tollEntryIdx];
+
+      const prevIsRamp = prevStep && isRampOrTurnStep(prevStep);
+      const anchorStep = prevIsRamp ? prevStep : tollStep;
+      const anchorLoc = anchorStep?.startLocation?.latLng;
       const tollEncoded = tollRoute.polyline?.encodedPolyline;
 
-      if (rampLoc && tollEncoded) {
+      if (anchorLoc && tollEncoded) {
         const tollPts = decodePolyline(tollEncoded);
-        const rampIdx = nearestPolylineIndex(tollPts, rampLoc.latitude, rampLoc.longitude);
-        const { point, actualMetresBack, ranOutOfRoute } = walkBackByDistance(tollPts, rampIdx, DECISION_POINT_LEAD_METRES);
+        const anchorIdx = nearestPolylineIndex(tollPts, anchorLoc.latitude, anchorLoc.longitude);
+        const { point, actualMetresBack, ranOutOfRoute } = walkBackByDistance(tollPts, anchorIdx, DECISION_POINT_LEAD_METRES);
 
         if (debug) {
-          console.log(`Ramp/turn "${rampStep.navigationInstruction?.instructions}" at polyline idx ${rampIdx} (${rampLoc.latitude},${rampLoc.longitude})`);
+          console.log(`Anchor "${anchorStep.navigationInstruction?.instructions}" (prevIsRamp=${!!prevIsRamp}) at polyline idx ${anchorIdx} (${anchorLoc.latitude},${anchorLoc.longitude})`);
           console.log(`Backed off ${actualMetresBack.toFixed(0)}m along polyline to (${point.latitude.toFixed(5)},${point.longitude.toFixed(5)})${ranOutOfRoute ? ' (ran out of route before reaching target distance, using route start)' : ''}`);
         }
 
