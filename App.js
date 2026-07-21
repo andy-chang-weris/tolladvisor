@@ -237,9 +237,9 @@ async function getRoutes(originLat, originLng, destination, googleKey) {
   return routes;
 }
 
-function Label({ children, large }) {
+function Label({ children, large, style }) {
   const { s } = useTheme();
-  return <Text style={[s.label, large && s.labelLarge]}>{children}</Text>;
+  return <Text style={[s.label, large && s.labelLarge, style]}>{children}</Text>;
 }
 
 function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboardType, editable = true, onFocus, onBlur, large }) {
@@ -247,7 +247,14 @@ function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboar
   const [focused, setFocused] = useState(false);
   return (
     <TextInput
-      style={[s.input, large && s.inputLarge, focused && s.inputFocused, !editable && s.inputDisabled]}
+      style={[
+        s.input, large && s.inputLarge, focused && s.inputFocused, !editable && s.inputDisabled,
+        // On web, TextInput can inherit a default white-space that wraps
+        // long placeholder/value text instead of scrolling it off to the
+        // side like native single-line inputs do. Native platforms ignore
+        // this unrecognized style key harmlessly.
+        Platform.OS === 'web' && { whiteSpace: 'nowrap' },
+      ]}
       value={value}
       onChangeText={onChangeText}
       placeholder={placeholder}
@@ -255,6 +262,8 @@ function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboar
       secureTextEntry={secureTextEntry}
       keyboardType={keyboardType}
       editable={editable}
+      multiline={false}
+      numberOfLines={1}
       onFocus={() => { setFocused(true); onFocus && onFocus(); }}
       onBlur={() => { setFocused(false); onBlur && onBlur(); }}
     />
@@ -266,9 +275,10 @@ function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboar
 // darkened bottom edge, and a soft cast shadow. On press, only the gradient
 // and inner content shift — the button's outer box size never changes, so
 // nothing around it (e.g. the topbar) reflows when pressed.
-function SkeuButton({ onPress, disabled, children, style, size = 'large' }) {
+function SkeuButton({ onPress, disabled, children, style, size = 'large', tone = 'default' }) {
   const { C } = useTheme();
   const isIcon = size === 'icon';
+  const subtle = tone === 'subtle';
   const radius = isIcon ? 10 : 12;
   const boxStyle = isIcon ? { width: 34, height: 34 } : { height: 50 };
 
@@ -284,19 +294,19 @@ function SkeuButton({ onPress, disabled, children, style, size = 'large' }) {
             flex: 1,
             borderRadius: radius,
             shadowColor: '#000',
-            shadowOffset: { width: 0, height: pressed ? 1 : 2 },
-            shadowOpacity: pressed ? 0.1 : 0.18,
-            shadowRadius: pressed ? 1.5 : 3,
-            elevation: pressed ? 1 : 3,
+            shadowOffset: { width: 0, height: pressed ? 0.5 : (subtle ? 1 : 2) },
+            shadowOpacity: pressed ? 0.06 : (subtle ? 0.1 : 0.18),
+            shadowRadius: pressed ? 1 : (subtle ? 2 : 3),
+            elevation: pressed ? 1 : (subtle ? 2 : 3),
             backgroundColor: 'transparent',
           }}
         >
           <View style={{ flex: 1, borderRadius: radius, overflow: 'hidden' }}>
             <LinearGradient
-              colors={pressed
-                ? [C.blueBottom, C.blueBase]
-                : [C.blueTop, C.blueBase, C.blueBottom]}
-              locations={pressed ? [0, 1] : [0, 0.55, 1]}
+              colors={subtle
+                ? (pressed ? [C.blueBase, C.blueLight] : [C.blueLight, C.blueBase])
+                : (pressed ? [C.blueBottom, C.blueBase] : [C.blueTop, C.blueBase, C.blueBottom])}
+              locations={subtle ? [0, 1] : (pressed ? [0, 1] : [0, 0.55, 1])}
               start={{ x: 0, y: 0 }}
               end={{ x: 0, y: 1 }}
               style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
@@ -311,8 +321,9 @@ function SkeuButton({ onPress, disabled, children, style, size = 'large' }) {
               pointerEvents="none"
               style={{
                 position: 'absolute', left: 0, right: 0, bottom: 0,
-                height: 2, backgroundColor: C.blueEdge,
-                opacity: pressed ? 0.35 : 0.9,
+                height: subtle ? 1.5 : 2,
+                backgroundColor: C.blueEdge,
+                opacity: pressed ? 0.25 : (subtle ? 0.5 : 0.9),
               }}
             />
           </View>
@@ -885,7 +896,7 @@ export default function App() {
           <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
 
             <Card>
-              <Label large>Starting Location</Label>
+              <Label large style={{ marginTop: 0 }}>Starting Location</Label>
               <AddressInput
                 large
                 value={locationText}
@@ -895,9 +906,9 @@ export default function App() {
                 onSelectRecent={addr => { setLocationText(addr); setLocationMode('manual'); }}
                 onRemoveRecent={removeRecentLocation}
                 rightSlot={
-                  <TouchableOpacity style={s.locBtn} onPress={detectLocation} activeOpacity={0.8}>
+                  <SkeuButton size="icon" tone="subtle" onPress={detectLocation} style={{ width: 50, height: 50 }}>
                     <Text style={s.locBtnIcon}>📍</Text>
-                  </TouchableOpacity>
+                  </SkeuButton>
                 }
               />
               <Label large>Destination</Label>
@@ -920,10 +931,16 @@ export default function App() {
                   {roadInfo && (
                     <View>
                       <View style={s.roadBadge}>
-                        <View style={s.roadDot} />
+                        <View style={[s.roadDot, { backgroundColor: C.posGreen }]} />
                         <Text style={s.roadBadgeText}>{roadInfo.roadName}</Text>
                       </View>
                       <Text style={s.roadFormatted}>{roadInfo.formatted}</Text>
+                    </View>
+                  )}
+                  {!roadInfo && stepStates[1] === 'error' && (
+                    <View style={s.roadBadge}>
+                      <View style={[s.roadDot, { backgroundColor: C.negRed }]} />
+                      <Text style={s.roadBadgeText}>Could not identify road</Text>
                     </View>
                   )}
                 </StepCard>
@@ -955,7 +972,7 @@ export default function App() {
 
                 <View style={s.compactSummary}>
                   <View style={s.compactSummaryRow}>
-                    <View style={s.roadDot} />
+                    <View style={[s.roadDot, { backgroundColor: C.posGreen }]} />
                     <Text style={s.compactSummaryText}>{roadInfo?.roadName}</Text>
                   </View>
                   <Text style={s.compactSummarySub}>{roadInfo?.formatted}</Text>
@@ -1086,8 +1103,7 @@ function makeStyles(C) {
     inputDisabled:  { opacity: 0.5 },
 
     locRow:         { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
-    locBtn:         { width: 42, height: 42, backgroundColor: C.blueD, borderWidth: 1, borderColor: C.blueB, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-    locBtnIcon:     { fontSize: 16 },
+    locBtnIcon:     { fontSize: 16, color: '#ffffff' },
 
     recentsWrap:       { marginTop: 6 },
     recentsLabel:      { fontSize: 9, color: C.muted, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 },
@@ -1126,7 +1142,7 @@ function makeStyles(C) {
     connector:      { width: 1, height: 16, backgroundColor: C.border, marginLeft: 30, marginVertical: 1 },
 
     roadBadge:      { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start', marginBottom: 6 },
-    roadDot:        { width: 7, height: 7, borderRadius: 4, backgroundColor: C.blue },
+    roadDot:        { width: 7, height: 7, borderRadius: 4 },
     roadBadgeText:  { fontSize: 12, color: C.text },
     roadFormatted:  { fontSize: 12, color: C.muted, marginTop: 2 },
 
