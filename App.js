@@ -929,7 +929,7 @@ export default function App() {
                 onSelectRecent={addr => { setLocationText(addr); setLocationMode('manual'); }}
                 onRemoveRecent={removeRecentLocation}
                 rightSlot={
-                  <SkeuButton size="icon" tone="subtle" onPress={detectLocation} style={{ width: 50, height: 50 }}>
+                  <SkeuButton size="icon" tone="subtle" onPress={detectLocation} style={{ width: 54, height: 54 }}>
                     <Text style={s.locBtnIcon}>📍</Text>
                   </SkeuButton>
                 }
@@ -1088,8 +1088,7 @@ export default function App() {
                 >
                   <View style={s.interfaceRow}>
                     <View style={{ flex: 1 }}>
-                      <Text style={s.toggleLabel}>Dark mode</Text>
-                      <Text style={s.toggleSub}>Applies across the whole app and is remembered next time you open it</Text>
+                      <Text style={s.toggleLabel}>Light/Dark Mode</Text>
                     </View>
                     <Switch
                       value={theme === 'dark'}
@@ -1147,8 +1146,8 @@ function makeStyles(C) {
     label:          { fontSize: 11, color: C.muted, marginBottom: 4, marginTop: 10, letterSpacing: 0.5 },
     labelLarge:     { fontSize: 13, marginTop: 12 },
     hint:           { fontSize: 11, color: C.muted, opacity: 0.7, marginBottom: 6, lineHeight: 14 },
-    input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, height: 40 },
-    inputLarge:     { fontSize: 17, paddingVertical: 14, fontWeight: '500', height: 50 },
+    input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, lineHeight: 16, height: 42, includeFontPadding: false },
+    inputLarge:     { fontSize: 17, lineHeight: 20, paddingVertical: 12, fontWeight: '500', height: 54, includeFontPadding: false },
     inputFocused:   { borderColor: C.blueB },
     inputDisabled:  { opacity: 0.5 },
 
