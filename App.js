@@ -56,6 +56,12 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   }
 });
 
+// ── Palette ──────────────────────────────────────────────────────────────
+// Base UI is black/white/gray in both themes. The only two brand colors are
+// Pantone 5405 CP (#426480, "blue") and Pantone 325 CP (#6bc9cb, "teal").
+// Red/green are kept ONLY for the value-delta stat (+/-), per spec — every
+// other "status" color (success, active, running, warnings) maps onto the
+// blue/teal/gray system instead of traffic-light colors.
 const COLORS = {
   dark: {
     black:   '#0a0a0a',
@@ -63,17 +69,22 @@ const COLORS = {
     panel:   '#181c24',
     border:  'rgba(255,255,255,0.07)',
     border2: 'rgba(255,255,255,0.12)',
-    text:    '#e8eaf0',
-    muted:   '#6b7280',
-    green:   '#22c55e',
-    greenD:  'rgba(34,197,94,0.12)',
-    greenB:  'rgba(34,197,94,0.25)',
-    amber:   '#f59e0b',
-    amberD:  'rgba(245,158,11,0.12)',
-    red:     '#ef4444',
-    redD:    'rgba(239,68,68,0.10)',
-    blue:    '#3b82f6',
-    blueD:   'rgba(59,130,246,0.10)',
+    text:    '#f2f3f5',
+    muted:   '#8a8f98',
+
+    // Brand accents
+    blue:    '#426480',
+    blueD:   'rgba(66,100,128,0.18)',
+    blueB:   'rgba(66,100,128,0.35)',
+    teal:    '#6bc9cb',
+    tealD:   'rgba(107,201,203,0.14)',
+    tealB:   'rgba(107,201,203,0.32)',
+
+    // Delta-only semantic colors
+    posGreen: '#22c55e',
+    negRed:   '#ef4444',
+    negRedD:  'rgba(239,68,68,0.10)',
+    negRedB:  'rgba(239,68,68,0.30)',
   },
   light: {
     black:   '#f4f5f7',
@@ -82,16 +93,19 @@ const COLORS = {
     border:  'rgba(0,0,0,0.08)',
     border2: 'rgba(0,0,0,0.16)',
     text:    '#111318',
-    muted:   '#6b7280',
-    green:   '#16a34a',
-    greenD:  'rgba(22,163,74,0.10)',
-    greenB:  'rgba(22,163,74,0.25)',
-    amber:   '#b45309',
-    amberD:  'rgba(180,83,9,0.10)',
-    red:     '#dc2626',
-    redD:    'rgba(220,38,38,0.08)',
-    blue:    '#2563eb',
-    blueD:   'rgba(37,99,235,0.08)',
+    muted:   '#666b74',
+
+    blue:    '#426480',
+    blueD:   'rgba(66,100,128,0.10)',
+    blueB:   'rgba(66,100,128,0.28)',
+    teal:    '#3f9b9d',
+    tealD:   'rgba(107,201,203,0.16)',
+    tealB:   'rgba(63,155,157,0.30)',
+
+    posGreen: '#16a34a',
+    negRed:   '#dc2626',
+    negRedD:  'rgba(220,38,38,0.08)',
+    negRedB:  'rgba(220,38,38,0.28)',
   },
 };
 
@@ -347,12 +361,12 @@ function UrgencyPicker({ value, onChange }) {
 
 function StepPill({ state }) {
   const { C, s } = useTheme();
-  const color  = state === 'running' ? C.amber : state === 'done' ? C.green : state === 'error' ? C.red : C.muted;
-  const border = state === 'running' ? 'rgba(245,158,11,0.3)' : state === 'done' ? 'rgba(34,197,94,0.3)' : state === 'error' ? 'rgba(239,68,68,0.3)' : C.border;
+  const color  = state === 'running' ? C.blue : state === 'done' ? C.teal : state === 'error' ? C.negRed : C.muted;
+  const border = state === 'running' ? C.blueB : state === 'done' ? C.tealB : state === 'error' ? C.negRedB : C.border;
   return (
     <View style={[s.pill, { borderColor: border }]}>
       {state === 'running'
-        ? <ActivityIndicator size={10} color={C.amber} />
+        ? <ActivityIndicator size={10} color={C.blue} />
         : <Text style={[s.pillText, { color }]}>{state}</Text>
       }
     </View>
@@ -361,7 +375,7 @@ function StepPill({ state }) {
 
 function StepCard({ num, title, state, children }) {
   const { C, s } = useTheme();
-  const borderColor = state === 'running' ? 'rgba(59,130,246,0.5)' : state === 'done' ? 'rgba(34,197,94,0.4)' : state === 'error' ? 'rgba(239,68,68,0.4)' : C.border;
+  const borderColor = state === 'running' ? C.blueB : state === 'done' ? C.tealB : state === 'error' ? C.negRedB : C.border;
   return (
     <View style={[s.step, { borderColor }]}>
       <View style={s.stepRow}>
@@ -386,9 +400,10 @@ function RouteCard({ route, isToll, isAlt }) {
   const cost      = getTollCost(route);
   const distKm    = (route.distanceMeters / 1000).toFixed(1);
   const label     = isToll ? (isAlt ? 'TOLL ROUTE (ALT)' : 'TOLL ROUTE') : 'FREE ROUTE';
-  const bg        = isToll ? C.amberD : C.blueD;
-  const border    = isToll ? 'rgba(245,158,11,0.25)' : 'rgba(59,130,246,0.25)';
-  const typeColor = isToll ? C.amber : C.blue;
+  // Toll routes get the blue accent; free routes stay neutral/grayscale.
+  const bg        = isToll ? C.blueD : C.panel;
+  const border    = isToll ? C.blueB : C.border2;
+  const typeColor = isToll ? C.blue : C.muted;
   return (
     <View style={[s.routeCard, { backgroundColor: bg, borderColor: border }]}>
       <Text style={[s.routeType, { color: typeColor }]}>{label}</Text>
@@ -412,11 +427,12 @@ function RouteCard({ route, isToll, isAlt }) {
 function VerdictCard({ verdict }) {
   const { C, s } = useTheme();
   const take        = verdict.recommendation === 'TAKE_TOLL';
-  const bg          = take ? C.greenD : C.blueD;
-  const border      = take ? C.greenB : 'rgba(59,130,246,0.25)';
-  const accentColor = take ? C.green  : C.blue;
+  // Recommendation card uses teal (take) vs neutral gray (skip) — no traffic-light color.
+  const bg          = take ? C.tealD : C.panel;
+  const border      = take ? C.tealB : C.border2;
+  const accentColor = take ? C.teal  : C.text;
   const delta       = (verdict.worthToPay ?? 0) - verdict.tollCost;
-  const deltaColor  = delta >= 0 ? C.green : C.red;
+  const deltaColor  = delta >= 0 ? C.posGreen : C.negRed;
   return (
     <View style={[s.verdictCard, { backgroundColor: bg, borderColor: border }]}>
       <Text style={[s.verdictLabel, { color: accentColor }]}>
@@ -429,7 +445,7 @@ function VerdictCard({ verdict }) {
           <Text style={s.verdictStatLabel}>TIME SAVED</Text>
         </View>
         <View style={s.verdictStat}>
-          <Text style={[s.verdictStatNum, { color: C.amber }]}>${verdict.tollCost.toFixed(2)}</Text>
+          <Text style={[s.verdictStatNum, { color: C.text }]}>${verdict.tollCost.toFixed(2)}</Text>
           <Text style={s.verdictStatLabel}>TOLL COST</Text>
         </View>
         <View style={s.verdictStat}>
@@ -759,7 +775,7 @@ export default function App() {
               <Switch
                 value={theme === 'dark'}
                 onValueChange={v => setTheme(v ? 'dark' : 'light')}
-                trackColor={{ false: '#d1d5db', true: C.green }}
+                trackColor={{ false: '#d1d5db', true: C.teal }}
                 thumbColor="#ffffff"
                 ios_backgroundColor="#d1d5db"
               />
@@ -896,7 +912,7 @@ export default function App() {
                 activeOpacity={0.8}
               >
                 {analysing
-                  ? <ActivityIndicator color="#000" />
+                  ? <ActivityIndicator color={theme === 'dark' ? '#0a0a0a' : '#ffffff'} />
                   : <Text style={s.primaryBtnText}>Analyze Route</Text>
                 }
               </TouchableOpacity>
@@ -965,7 +981,7 @@ function makeStyles(C) {
 
     configSummary:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: C.dark, paddingHorizontal: 20, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border },
     configSummaryText: { fontSize: 11, color: C.muted, flex: 1, marginRight: 8 },
-    configSummaryEdit: { fontSize: 11, color: C.green, fontWeight: '600' },
+    configSummaryEdit: { fontSize: 11, color: C.teal, fontWeight: '600' },
 
     modalOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     modalPanel:     { backgroundColor: C.dark, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
@@ -982,7 +998,7 @@ function makeStyles(C) {
     label:          { fontSize: 11, color: C.muted, marginBottom: 4, marginTop: 10, letterSpacing: 0.5 },
     hint:           { fontSize: 11, color: C.muted, opacity: 0.7, marginBottom: 6, lineHeight: 14 },
     input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13 },
-    inputFocused:   { borderColor: C.border2 },
+    inputFocused:   { borderColor: C.blueB },
     inputDisabled:  { opacity: 0.5 },
 
     locRow:         { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
@@ -1002,9 +1018,9 @@ function makeStyles(C) {
 
     passGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
     passChip:       { borderWidth: 1, borderColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
-    passChipActive: { borderColor: C.green, backgroundColor: C.greenD },
+    passChipActive: { borderColor: C.teal, backgroundColor: C.tealD },
     passChipText:   { fontSize: 11, color: C.muted },
-    passChipTextActive: { color: C.green, fontWeight: '600' },
+    passChipTextActive: { color: C.teal, fontWeight: '600' },
     passChipSub:    { fontSize: 9, marginTop: 1 },
 
     sectionLabel:   { fontSize: 10, color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
@@ -1026,7 +1042,7 @@ function makeStyles(C) {
     connector:      { width: 1, height: 16, backgroundColor: C.border, marginLeft: 30, marginVertical: 1 },
 
     roadBadge:      { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start', marginBottom: 6 },
-    roadDot:        { width: 7, height: 7, borderRadius: 4, backgroundColor: C.green },
+    roadDot:        { width: 7, height: 7, borderRadius: 4, backgroundColor: C.teal },
     roadBadgeText:  { fontSize: 12, color: C.text },
     roadFormatted:  { fontSize: 12, color: C.muted, marginTop: 2 },
 
@@ -1038,7 +1054,7 @@ function makeStyles(C) {
     routeStatLast:  { borderBottomWidth: 0 },
     routeStatLabel: { fontSize: 11, color: C.muted },
     routeStatValue: { fontSize: 11, color: C.text, fontWeight: '500' },
-    noFreeNote:     { fontSize: 11, color: C.amber, marginTop: 8 },
+    noFreeNote:     { fontSize: 11, color: C.muted, marginTop: 8, fontStyle: 'italic' },
 
     verdictCard:      { borderWidth: 1, borderRadius: 10, padding: 14 },
     verdictLabel:     { fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
@@ -1048,18 +1064,18 @@ function makeStyles(C) {
     verdictStatNum:   { fontSize: 20, fontWeight: '800', marginBottom: 4 },
     verdictStatLabel: { fontSize: 9, color: C.muted, letterSpacing: 1 },
 
-    notifBar:       { backgroundColor: 'rgba(34,197,94,0.1)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.3)', borderRadius: 8, padding: 12, marginTop: 12 },
-    notifText:      { fontSize: 12, color: C.green, textAlign: 'center' },
+    notifBar:       { backgroundColor: C.tealD, borderWidth: 1, borderColor: C.tealB, borderRadius: 8, padding: 12, marginTop: 12 },
+    notifText:      { fontSize: 12, color: C.teal, textAlign: 'center' },
 
-    geofenceBar:    { backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.3)', borderRadius: 8, padding: 12, marginTop: 8 },
+    geofenceBar:    { backgroundColor: C.blueD, borderWidth: 1, borderColor: C.blueB, borderRadius: 8, padding: 12, marginTop: 8 },
     geofenceText:   { fontSize: 12, color: C.blue, textAlign: 'center' },
 
-    errorBar:       { backgroundColor: C.redD, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)', borderRadius: 8, padding: 12, marginTop: 12 },
-    errorText:      { fontSize: 12, color: C.red },
+    errorBar:       { backgroundColor: C.negRedD, borderWidth: 1, borderColor: C.negRedB, borderRadius: 8, padding: 12, marginTop: 12 },
+    errorText:      { fontSize: 12, color: C.negRed },
 
     btnRow:         { marginTop: 16 },
-    primaryBtn:     { backgroundColor: C.green, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
-    primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#000', letterSpacing: 0.5 },
+    primaryBtn:     { backgroundColor: C.teal, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+    primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#0a0a0a', letterSpacing: 0.5 },
     btnDisabled:    { opacity: 0.5 },
   });
 }
