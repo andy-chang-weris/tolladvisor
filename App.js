@@ -134,6 +134,12 @@ async function requestNotificationPermission() {
 }
 
 function buildNotificationContent(verdict, destination) {
+  if (!verdict.tollRoute) {
+    return {
+      title: 'ℹ️ No toll road used',
+      body: "The fastest route here doesn't use a toll road — either there's no toll road to this destination, or the toll route isn't fast enough to beat the free route.",
+    };
+  }
   const take  = verdict.recommendation === 'TAKE_TOLL';
   const title = take ? '✓ Take the toll road' : '✕ Skip the toll';
   const body  = verdict.reason + ` (${verdict.timeSavedMin} min saved · $${verdict.tollCost.toFixed(2)} toll)`;
@@ -537,6 +543,20 @@ function RouteCard({ route, isToll, isAlt }) {
 
 function VerdictCard({ verdict }) {
   const { C, s } = useTheme();
+
+  if (!verdict.tollRoute) {
+    return (
+      <View style={[s.verdictCard, { backgroundColor: C.panel, borderColor: C.border2 }]}>
+        <Text style={[s.verdictLabel, { color: C.text }]}>ℹ NO TOLL ROAD USED</Text>
+        <Text style={s.verdictText}>
+          The fastest route to this destination doesn't use a toll road. This
+          could mean there's no toll road here at all, or that a toll route
+          exists but isn't fast enough to be selected over the free route.
+        </Text>
+      </View>
+    );
+  }
+
   const take        = verdict.recommendation === 'TAKE_TOLL';
   // Recommendation card uses teal (take) vs neutral gray (skip) — no traffic-light color.
   const bg          = take ? C.tealD : C.panel;
@@ -924,12 +944,12 @@ export default function App() {
                 large
                 value={locationText}
                 onChangeText={t => { setLocationText(t); setLocationMode('manual'); }}
-                placeholder='e.g. 1600 Pennsylvania Ave, Washington DC'
+                placeholder='Enter starting location'
                 recents={recentLocations}
                 onSelectRecent={addr => { setLocationText(addr); setLocationMode('manual'); }}
                 onRemoveRecent={removeRecentLocation}
                 rightSlot={
-                  <SkeuButton size="icon" tone="subtle" onPress={detectLocation} style={{ width: 54, height: 54 }}>
+                  <SkeuButton size="icon" tone="subtle" onPress={detectLocation} style={{ width: 50, height: 50 }}>
                     <Text style={s.locBtnIcon}>📍</Text>
                   </SkeuButton>
                 }
@@ -939,7 +959,7 @@ export default function App() {
                 large
                 value={destination}
                 onChangeText={setDestination}
-                placeholder='e.g. 1600 Pennsylvania Ave, Washington DC'
+                placeholder='Enter destination'
                 recents={recentDestinations}
                 onSelectRecent={setDestination}
                 onRemoveRecent={removeRecentDestination}
@@ -1146,8 +1166,8 @@ function makeStyles(C) {
     label:          { fontSize: 11, color: C.muted, marginBottom: 4, marginTop: 10, letterSpacing: 0.5 },
     labelLarge:     { fontSize: 13, marginTop: 12 },
     hint:           { fontSize: 11, color: C.muted, opacity: 0.7, marginBottom: 6, lineHeight: 14 },
-    input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, lineHeight: 16, height: 42, includeFontPadding: false },
-    inputLarge:     { fontSize: 17, lineHeight: 20, paddingVertical: 12, fontWeight: '500', height: 54, includeFontPadding: false },
+    input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, height: 40 },
+    inputLarge:     { fontSize: 17, paddingVertical: 14, fontWeight: '500', height: 50 },
     inputFocused:   { borderColor: C.blueB },
     inputDisabled:  { opacity: 0.5 },
 
