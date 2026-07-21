@@ -262,56 +262,59 @@ function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboar
 }
 
 // ── SkeuButton ───────────────────────────────────────────────────────────
-// A "physical" button: brighter at the top (catching light), darker at the
-// bottom (in its own shadow), a darkened bottom edge, and a soft cast
-// shadow beneath it. On press it flattens and sinks slightly, as if pushed
-// in — shadow shrinks, gradient inverts, content nudges down 1-2px.
-function SkeuButton({ onPress, disabled, children, style, contentStyle, size = 'large' }) {
+// A "physical" button: brighter at the top, darker at the bottom, a subtle
+// darkened bottom edge, and a soft cast shadow. On press, only the gradient
+// and inner content shift — the button's outer box size never changes, so
+// nothing around it (e.g. the topbar) reflows when pressed.
+function SkeuButton({ onPress, disabled, children, style, size = 'large' }) {
   const { C } = useTheme();
   const isIcon = size === 'icon';
+  const radius = isIcon ? 10 : 12;
+  const boxStyle = isIcon ? { width: 34, height: 34 } : { height: 50 };
 
   return (
-    <Pressable onPress={onPress} disabled={disabled} style={style}>
+    <Pressable onPress={onPress} disabled={disabled} style={[boxStyle, style, disabled && { opacity: 0.5 }]}>
       {({ pressed }) => (
+        // Shadow lives on this outer, non-clipped view so it isn't cut off
+        // by the inner overflow:hidden — this is what was causing the
+        // "detached" look in light mode (the shadow was being rendered
+        // against the wrong, non-matching edge).
         <View
-          style={[
-            {
-              borderRadius: isIcon ? 10 : 12,
-              // Cast shadow — softer/lower when unpushed, tight/gone when pushed.
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: pressed ? 1 : 4 },
-              shadowOpacity: pressed ? 0.15 : 0.35,
-              shadowRadius: pressed ? 2 : 6,
-              elevation: pressed ? 1 : 6,
-              opacity: disabled ? 0.5 : 1,
-            },
-          ]}
+          style={{
+            flex: 1,
+            borderRadius: radius,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: pressed ? 1 : 2 },
+            shadowOpacity: pressed ? 0.1 : 0.18,
+            shadowRadius: pressed ? 1.5 : 3,
+            elevation: pressed ? 1 : 3,
+            backgroundColor: 'transparent',
+          }}
         >
-          <View
-            style={{
-              borderRadius: isIcon ? 10 : 12,
-              borderBottomWidth: pressed ? 1 : 3,
-              borderBottomColor: C.blueEdge,
-              overflow: 'hidden',
-              transform: [{ translateY: pressed ? 2 : 0 }],
-            }}
-          >
+          <View style={{ flex: 1, borderRadius: radius, overflow: 'hidden' }}>
             <LinearGradient
               colors={pressed
                 ? [C.blueBottom, C.blueBase]
                 : [C.blueTop, C.blueBase, C.blueBottom]}
-              locations={pressed ? [0, 1] : [0, 0.5, 1]}
+              locations={pressed ? [0, 1] : [0, 0.55, 1]}
               start={{ x: 0, y: 0 }}
               end={{ x: 0, y: 1 }}
-              style={[
-                isIcon
-                  ? { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }
-                  : { paddingVertical: 14, alignItems: 'center' },
-                contentStyle,
-              ]}
+              style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
             >
-              {children}
+              <View style={{ transform: [{ translateY: pressed ? 1 : 0 }] }}>
+                {children}
+              </View>
             </LinearGradient>
+            {/* Darkened bottom edge — fixed height always, so it never
+                changes the button's box size on press, only its opacity. */}
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute', left: 0, right: 0, bottom: 0,
+                height: 2, backgroundColor: C.blueEdge,
+                opacity: pressed ? 0.35 : 0.9,
+              }}
+            />
           </View>
         </View>
       )}
