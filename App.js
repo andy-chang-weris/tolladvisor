@@ -2,9 +2,10 @@ import { useState, useCallback, useEffect, useMemo, useRef, createContext, useCo
 import {
   StyleSheet, Text, View, TextInput, TouchableOpacity,
   ScrollView, ActivityIndicator, SafeAreaView, Platform,
-  StatusBar, KeyboardAvoidingView, Modal, Switch,
+  StatusBar, KeyboardAvoidingView, Modal, Switch, Pressable,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
@@ -57,11 +58,11 @@ TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
 });
 
 // ── Palette ──────────────────────────────────────────────────────────────
-// Base UI is black/white/gray in both themes. The only two brand colors are
-// Pantone 5405 CP (#426480, "blue") and Pantone 325 CP (#6bc9cb, "teal").
-// Red/green are kept ONLY for the value-delta stat (+/-), per spec — every
-// other "status" color (success, active, running, warnings) maps onto the
-// blue/teal/gray system instead of traffic-light colors.
+// Base UI is black/white/gray in both themes. Blue (Pantone 5405, #426480)
+// is the PRIMARY brand color — it drives every interactive/button element.
+// Teal (Pantone 325, #6bc9cb) is a minor secondary, reserved for a couple of
+// "success/done" accents so it doesn't wash out into gray.
+// Red/green are kept ONLY for the value-delta stat (+/-), per spec.
 const COLORS = {
   dark: {
     black:   '#0a0a0a',
@@ -72,10 +73,19 @@ const COLORS = {
     text:    '#f2f3f5',
     muted:   '#8a8f98',
 
-    // Brand accents
-    blue:    '#426480',
-    blueD:   'rgba(66,100,128,0.18)',
-    blueB:   'rgba(66,100,128,0.35)',
+    // Primary brand accent (blue) — plus a full shade ramp for the
+    // skeuomorphic "physical button" treatment (lighter top → darker
+    // bottom → darkest shadow edge).
+    blue:       '#426480',
+    blueLight:  '#5c85a5',
+    blueTop:    '#5e87a8',
+    blueBase:   '#426480',
+    blueBottom: '#31506a',
+    blueEdge:   '#22394c',
+    blueD:      'rgba(66,100,128,0.18)',
+    blueB:      'rgba(66,100,128,0.45)',
+
+    // Secondary accent (teal) — used sparingly
     teal:    '#6bc9cb',
     tealD:   'rgba(107,201,203,0.14)',
     tealB:   'rgba(107,201,203,0.32)',
@@ -95,9 +105,15 @@ const COLORS = {
     text:    '#111318',
     muted:   '#666b74',
 
-    blue:    '#426480',
-    blueD:   'rgba(66,100,128,0.10)',
-    blueB:   'rgba(66,100,128,0.28)',
+    blue:       '#426480',
+    blueLight:  '#5c85a5',
+    blueTop:    '#6690b0',
+    blueBase:   '#426480',
+    blueBottom: '#324e64',
+    blueEdge:   '#233848',
+    blueD:      'rgba(66,100,128,0.10)',
+    blueB:      'rgba(66,100,128,0.35)',
+
     teal:    '#3f9b9d',
     tealD:   'rgba(107,201,203,0.16)',
     tealB:   'rgba(63,155,157,0.30)',
@@ -242,6 +258,64 @@ function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboar
       onFocus={() => { setFocused(true); onFocus && onFocus(); }}
       onBlur={() => { setFocused(false); onBlur && onBlur(); }}
     />
+  );
+}
+
+// ── SkeuButton ───────────────────────────────────────────────────────────
+// A "physical" button: brighter at the top (catching light), darker at the
+// bottom (in its own shadow), a darkened bottom edge, and a soft cast
+// shadow beneath it. On press it flattens and sinks slightly, as if pushed
+// in — shadow shrinks, gradient inverts, content nudges down 1-2px.
+function SkeuButton({ onPress, disabled, children, style, contentStyle, size = 'large' }) {
+  const { C } = useTheme();
+  const isIcon = size === 'icon';
+
+  return (
+    <Pressable onPress={onPress} disabled={disabled} style={style}>
+      {({ pressed }) => (
+        <View
+          style={[
+            {
+              borderRadius: isIcon ? 10 : 12,
+              // Cast shadow — softer/lower when unpushed, tight/gone when pushed.
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: pressed ? 1 : 4 },
+              shadowOpacity: pressed ? 0.15 : 0.35,
+              shadowRadius: pressed ? 2 : 6,
+              elevation: pressed ? 1 : 6,
+              opacity: disabled ? 0.5 : 1,
+            },
+          ]}
+        >
+          <View
+            style={{
+              borderRadius: isIcon ? 10 : 12,
+              borderBottomWidth: pressed ? 1 : 3,
+              borderBottomColor: C.blueEdge,
+              overflow: 'hidden',
+              transform: [{ translateY: pressed ? 2 : 0 }],
+            }}
+          >
+            <LinearGradient
+              colors={pressed
+                ? [C.blueBottom, C.blueBase]
+                : [C.blueTop, C.blueBase, C.blueBottom]}
+              locations={pressed ? [0, 1] : [0, 0.5, 1]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+              style={[
+                isIcon
+                  ? { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }
+                  : { paddingVertical: 14, alignItems: 'center' },
+                contentStyle,
+              ]}
+            >
+              {children}
+            </LinearGradient>
+          </View>
+        </View>
+      )}
+    </Pressable>
   );
 }
 
@@ -775,15 +849,15 @@ export default function App() {
               <Switch
                 value={theme === 'dark'}
                 onValueChange={v => setTheme(v ? 'dark' : 'light')}
-                trackColor={{ false: '#d1d5db', true: C.teal }}
+                trackColor={{ false: '#d1d5db', true: C.blue }}
                 thumbColor="#ffffff"
                 ios_backgroundColor="#d1d5db"
               />
               <Text style={s.themeIcon}>🌙</Text>
             </View>
-            <TouchableOpacity style={s.settingsBtn} onPress={() => setSettingsOpen(true)} activeOpacity={0.7}>
+            <SkeuButton size="icon" onPress={() => setSettingsOpen(true)}>
               <Text style={s.settingsBtnText}>⚙︎</Text>
-            </TouchableOpacity>
+            </SkeuButton>
           </View>
         </View>
 
@@ -905,17 +979,12 @@ export default function App() {
             ) : null}
 
             <View style={s.btnRow}>
-              <TouchableOpacity
-                style={[s.primaryBtn, analysing && s.btnDisabled]}
-                onPress={runAnalysis}
-                disabled={analysing}
-                activeOpacity={0.8}
-              >
+              <SkeuButton onPress={runAnalysis} disabled={analysing} style={{ width: '100%' }}>
                 {analysing
-                  ? <ActivityIndicator color={theme === 'dark' ? '#0a0a0a' : '#ffffff'} />
+                  ? <ActivityIndicator color="#ffffff" />
                   : <Text style={s.primaryBtnText}>Analyze Route</Text>
                 }
-              </TouchableOpacity>
+              </SkeuButton>
             </View>
 
             <View style={{ height: 40 }} />
@@ -976,12 +1045,11 @@ function makeStyles(C) {
     themeToggle:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
     themeIcon:       { fontSize: 12 },
 
-    settingsBtn:     { width: 34, height: 34, borderRadius: 8, backgroundColor: C.panel, borderWidth: 1, borderColor: C.border2, alignItems: 'center', justifyContent: 'center' },
-    settingsBtnText: { fontSize: 16, color: C.text },
+    settingsBtnText: { fontSize: 16, color: '#ffffff' },
 
     configSummary:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: C.dark, paddingHorizontal: 20, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border },
     configSummaryText: { fontSize: 11, color: C.muted, flex: 1, marginRight: 8 },
-    configSummaryEdit: { fontSize: 11, color: C.teal, fontWeight: '600' },
+    configSummaryEdit: { fontSize: 11, color: C.blue, fontWeight: '600' },
 
     modalOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     modalPanel:     { backgroundColor: C.dark, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
@@ -1002,7 +1070,7 @@ function makeStyles(C) {
     inputDisabled:  { opacity: 0.5 },
 
     locRow:         { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
-    locBtn:         { width: 42, height: 42, backgroundColor: C.border2, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+    locBtn:         { width: 42, height: 42, backgroundColor: C.blueD, borderWidth: 1, borderColor: C.blueB, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
     locBtnIcon:     { fontSize: 16 },
 
     recentsWrap:       { marginTop: 6 },
@@ -1018,9 +1086,9 @@ function makeStyles(C) {
 
     passGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
     passChip:       { borderWidth: 1, borderColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
-    passChipActive: { borderColor: C.teal, backgroundColor: C.tealD },
+    passChipActive: { borderColor: C.blue, backgroundColor: C.blueD },
     passChipText:   { fontSize: 11, color: C.muted },
-    passChipTextActive: { color: C.teal, fontWeight: '600' },
+    passChipTextActive: { color: C.blue, fontWeight: '600' },
     passChipSub:    { fontSize: 9, marginTop: 1 },
 
     sectionLabel:   { fontSize: 10, color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
@@ -1042,7 +1110,7 @@ function makeStyles(C) {
     connector:      { width: 1, height: 16, backgroundColor: C.border, marginLeft: 30, marginVertical: 1 },
 
     roadBadge:      { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.border2, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start', marginBottom: 6 },
-    roadDot:        { width: 7, height: 7, borderRadius: 4, backgroundColor: C.teal },
+    roadDot:        { width: 7, height: 7, borderRadius: 4, backgroundColor: C.blue },
     roadBadgeText:  { fontSize: 12, color: C.text },
     roadFormatted:  { fontSize: 12, color: C.muted, marginTop: 2 },
 
@@ -1064,8 +1132,8 @@ function makeStyles(C) {
     verdictStatNum:   { fontSize: 20, fontWeight: '800', marginBottom: 4 },
     verdictStatLabel: { fontSize: 9, color: C.muted, letterSpacing: 1 },
 
-    notifBar:       { backgroundColor: C.tealD, borderWidth: 1, borderColor: C.tealB, borderRadius: 8, padding: 12, marginTop: 12 },
-    notifText:      { fontSize: 12, color: C.teal, textAlign: 'center' },
+    notifBar:       { backgroundColor: C.blueD, borderWidth: 1, borderColor: C.blueB, borderRadius: 8, padding: 12, marginTop: 12 },
+    notifText:      { fontSize: 12, color: C.blue, textAlign: 'center' },
 
     geofenceBar:    { backgroundColor: C.blueD, borderWidth: 1, borderColor: C.blueB, borderRadius: 8, padding: 12, marginTop: 8 },
     geofenceText:   { fontSize: 12, color: C.blue, textAlign: 'center' },
@@ -1074,8 +1142,6 @@ function makeStyles(C) {
     errorText:      { fontSize: 12, color: C.negRed },
 
     btnRow:         { marginTop: 16 },
-    primaryBtn:     { backgroundColor: C.teal, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
-    primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#0a0a0a', letterSpacing: 0.5 },
-    btnDisabled:    { opacity: 0.5 },
+    primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#ffffff', letterSpacing: 0.5 },
   });
 }
