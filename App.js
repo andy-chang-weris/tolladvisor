@@ -263,7 +263,13 @@ function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboar
       keyboardType={keyboardType}
       editable={editable}
       multiline={false}
-      numberOfLines={1}
+      textAlignVertical="center"
+      // NOTE: numberOfLines is only meaningful when multiline=true — on
+      // react-native-web, passing it alongside multiline={false} can flip
+      // the underlying DOM node to a <textarea> on some reconciliations
+      // (e.g. after a theme-driven style-object change forces a prop diff),
+      // which is what caused the "fine at first, wraps after toggling
+      // theme" bug. Omitting it here keeps it a true single-line <input>.
       onFocus={() => { setFocused(true); onFocus && onFocus(); }}
       onBlur={() => { setFocused(false); onBlur && onBlur(); }}
     />
@@ -341,6 +347,22 @@ function Card({ children, style }) {
 function CardTitle({ children }) {
   const { s } = useTheme();
   return <Text style={s.cardTitle}>{children}</Text>;
+}
+
+// ── CollapsibleSection ───────────────────────────────────────────────────
+// A settings-modal section that expands/collapses, so more settings can be
+// added later without the modal turning into one long scroll.
+function CollapsibleSection({ title, open, onToggle, children }) {
+  const { s } = useTheme();
+  return (
+    <View style={s.collapseCard}>
+      <TouchableOpacity style={s.collapseHeader} onPress={onToggle} activeOpacity={0.7}>
+        <Text style={[s.cardTitle, { marginBottom: 0 }]}>{title}</Text>
+        <Text style={s.collapseChevron}>{open ? '▾' : '▸'}</Text>
+      </TouchableOpacity>
+      {open && <View style={s.collapseBody}>{children}</View>}
+    </View>
+  );
 }
 
 // ── AddressInput ─────────────────────────────────────────────────────────
@@ -570,7 +592,10 @@ export default function App() {
   const [geofenceArmed,    setGeofenceArmed]    = useState(false);
   const [error,            setError]            = useState('');
   const [settingsOpen,     setSettingsOpen]     = useState(false);
+  const [configSectionOpen,    setConfigSectionOpen]    = useState(true);
+  const [interfaceSectionOpen, setInterfaceSectionOpen] = useState(false);
   const [theme,            setTheme]            = useState('dark');
+  const [hydrated,         setHydrated]          = useState(false);
   const [recentLocations,    setRecentLocations]    = useState([]);
   const [recentDestinations, setRecentDestinations] = useState([]);
 
@@ -614,6 +639,13 @@ export default function App() {
         const savedDestinations = await AsyncStorage.getItem('recentDestinations');
         if (savedDestinations) setRecentDestinations(JSON.parse(savedDestinations));
       } catch {}
+      // Only start persisting state back to storage AFTER the initial load
+      // has finished. Without this, the save effects below fire on mount
+      // with their default values (e.g. theme='dark') and race the reads
+      // above — since both target the same AsyncStorage key, the default
+      // write can land before the real saved value is read back, which is
+      // what caused theme to always revert to dark on relaunch.
+      setHydrated(true);
     }
     loadSettings();
   }, []);
@@ -664,14 +696,16 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!hydrated) return;
     AsyncStorage.setItem('settings', JSON.stringify({
       minTimeSaved, maxToll, annualSalary, urgencyLevel,
     })).catch(() => {});
-  }, [minTimeSaved, maxToll, annualSalary, urgencyLevel]);
+  }, [minTimeSaved, maxToll, annualSalary, urgencyLevel, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
     AsyncStorage.setItem('theme', theme).catch(() => {});
-  }, [theme]);
+  }, [theme, hydrated]);
 
   async function detectLocation() {
     setLocationText('Detecting...');
@@ -868,17 +902,6 @@ export default function App() {
         <View style={[s.topbar, s.topbarRow]}>
           <Text style={s.logoText}>TOLL ADVISOR</Text>
           <View style={s.topbarRight}>
-            <View style={s.themeToggle}>
-              <Text style={s.themeIcon}>☀️</Text>
-              <Switch
-                value={theme === 'dark'}
-                onValueChange={v => setTheme(v ? 'dark' : 'light')}
-                trackColor={{ false: '#d1d5db', true: C.blue }}
-                thumbColor="#ffffff"
-                ios_backgroundColor="#d1d5db"
-              />
-              <Text style={s.themeIcon}>🌙</Text>
-            </View>
             <SkeuButton size="icon" onPress={() => setSettingsOpen(true)}>
               <Text style={s.settingsBtnText}>⚙︎</Text>
             </SkeuButton>
@@ -1037,10 +1060,12 @@ export default function App() {
                 </TouchableOpacity>
               </View>
               <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
-                <Card>
-                  <CardTitle>Configuration</CardTitle>
-
-                  <Label>Minimum time saved to take the toll</Label>
+                <CollapsibleSection
+                  title="Configuration"
+                  open={configSectionOpen}
+                  onToggle={() => setConfigSectionOpen(o => !o)}
+                >
+                  <Label style={{ marginTop: 0 }}>Minimum time saved to take the toll</Label>
                   <Text style={s.hint}>Only recommend the toll road if it saves at least this many minutes</Text>
                   <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
 
@@ -1054,7 +1079,27 @@ export default function App() {
 
                   <View style={s.divider} />
                   <UrgencyPicker value={urgencyLevel} onChange={setUrgencyLevel} />
-                </Card>
+                </CollapsibleSection>
+
+                <CollapsibleSection
+                  title="Interface"
+                  open={interfaceSectionOpen}
+                  onToggle={() => setInterfaceSectionOpen(o => !o)}
+                >
+                  <View style={s.interfaceRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.toggleLabel}>Dark mode</Text>
+                      <Text style={s.toggleSub}>Applies across the whole app and is remembered next time you open it</Text>
+                    </View>
+                    <Switch
+                      value={theme === 'dark'}
+                      onValueChange={v => setTheme(v ? 'dark' : 'light')}
+                      trackColor={{ false: '#d1d5db', true: C.blue }}
+                      thumbColor="#ffffff"
+                      ios_backgroundColor="#d1d5db"
+                    />
+                  </View>
+                </CollapsibleSection>
               </ScrollView>
             </View>
           </View>
@@ -1073,8 +1118,6 @@ function makeStyles(C) {
     logoSub:        { fontSize: 10, color: C.muted, letterSpacing: 1.5, marginTop: 2 },
 
     topbarRight:     { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    themeToggle:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    themeIcon:       { fontSize: 12 },
 
     settingsBtnText: { fontSize: 16, color: '#ffffff' },
 
@@ -1094,11 +1137,18 @@ function makeStyles(C) {
     card:           { backgroundColor: C.panel, borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 16, marginBottom: 12 },
     cardTitle:      { fontSize: 11, fontWeight: '700', color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 14 },
 
+    collapseCard:    { backgroundColor: C.panel, borderWidth: 1, borderColor: C.border, borderRadius: 12, marginBottom: 12, overflow: 'hidden' },
+    collapseHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16 },
+    collapseChevron: { fontSize: 13, color: C.muted, fontWeight: '700' },
+    collapseBody:    { paddingHorizontal: 16, paddingBottom: 16 },
+
+    interfaceRow:    { flexDirection: 'row', alignItems: 'center', gap: 12 },
+
     label:          { fontSize: 11, color: C.muted, marginBottom: 4, marginTop: 10, letterSpacing: 0.5 },
     labelLarge:     { fontSize: 13, marginTop: 12 },
     hint:           { fontSize: 11, color: C.muted, opacity: 0.7, marginBottom: 6, lineHeight: 14 },
-    input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13 },
-    inputLarge:     { fontSize: 17, paddingVertical: 14, fontWeight: '500' },
+    input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, height: 40 },
+    inputLarge:     { fontSize: 17, paddingVertical: 14, fontWeight: '500', height: 50 },
     inputFocused:   { borderColor: C.blueB },
     inputDisabled:  { opacity: 0.5 },
 
