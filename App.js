@@ -237,17 +237,17 @@ async function getRoutes(originLat, originLng, destination, googleKey) {
   return routes;
 }
 
-function Label({ children }) {
+function Label({ children, large }) {
   const { s } = useTheme();
-  return <Text style={s.label}>{children}</Text>;
+  return <Text style={[s.label, large && s.labelLarge]}>{children}</Text>;
 }
 
-function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboardType, editable = true, onFocus, onBlur }) {
+function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboardType, editable = true, onFocus, onBlur, large }) {
   const { C, s } = useTheme();
   const [focused, setFocused] = useState(false);
   return (
     <TextInput
-      style={[s.input, focused && s.inputFocused, !editable && s.inputDisabled]}
+      style={[s.input, large && s.inputLarge, focused && s.inputFocused, !editable && s.inputDisabled]}
       value={value}
       onChangeText={onChangeText}
       placeholder={placeholder}
@@ -341,7 +341,7 @@ function CardTitle({ children }) {
 // on some devices cancels the tap entirely.
 const BLUR_CLOSE_DELAY_MS = 150;
 
-function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecent, onRemoveRecent, rightSlot }) {
+function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecent, onRemoveRecent, rightSlot, large }) {
   const { s } = useTheme();
   const [open, setOpen] = useState(false);
   const closeTimer = useRef(null);
@@ -369,6 +369,7 @@ function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecen
             placeholder={placeholder}
             onFocus={handleFocus}
             onBlur={handleBlur}
+            large={large}
           />
         </View>
         {rightSlot}
@@ -809,6 +810,15 @@ export default function App() {
     };
 
     try {
+      // The decision-point notification only makes sense when there's an
+      // actual choice to make (toll vs. free). If there's no toll route at
+      // all — nothing to compare against — skip geofencing entirely and
+      // let the advisory notification (already sent above) stand alone.
+      if (!v.tollRoute || !v.freeRoute) {
+        setAnalysing(false);
+        return;
+      }
+
       const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
       if (bgStatus === 'granted') {
         const decisionPt = getDecisionPoint(v.tollRoute, v.freeRoute, originLat, originLng);
@@ -875,9 +885,9 @@ export default function App() {
           <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
 
             <Card>
-              <CardTitle>Route</CardTitle>
-              <Label>Starting Location</Label>
+              <Label large>Starting Location</Label>
               <AddressInput
+                large
                 value={locationText}
                 onChangeText={t => { setLocationText(t); setLocationMode('manual'); }}
                 placeholder='e.g. 1600 Pennsylvania Ave, Washington DC'
@@ -890,8 +900,9 @@ export default function App() {
                   </TouchableOpacity>
                 }
               />
-              <Label>Destination</Label>
+              <Label large>Destination</Label>
               <AddressInput
+                large
                 value={destination}
                 onChangeText={setDestination}
                 placeholder='e.g. 1600 Pennsylvania Ave, Washington DC'
@@ -1067,8 +1078,10 @@ function makeStyles(C) {
     cardTitle:      { fontSize: 11, fontWeight: '700', color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 14 },
 
     label:          { fontSize: 11, color: C.muted, marginBottom: 4, marginTop: 10, letterSpacing: 0.5 },
+    labelLarge:     { fontSize: 13, marginTop: 12 },
     hint:           { fontSize: 11, color: C.muted, opacity: 0.7, marginBottom: 6, lineHeight: 14 },
     input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13 },
+    inputLarge:     { fontSize: 17, paddingVertical: 14, fontWeight: '500' },
     inputFocused:   { borderColor: C.blueB },
     inputDisabled:  { opacity: 0.5 },
 
