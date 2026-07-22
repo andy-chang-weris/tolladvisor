@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
@@ -287,15 +288,34 @@ function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboar
 // darkened bottom edge, and a soft cast shadow. On press, only the gradient
 // and inner content shift — the button's outer box size never changes, so
 // nothing around it (e.g. the topbar) reflows when pressed.
-function SkeuButton({ onPress, disabled, children, style, size = 'large', tone = 'default' }) {
+//
+// Accessibility: icon-only buttons (size="icon") have no visible text, so
+// callers MUST pass accessibilityLabel describing the action. We also force
+// a minimum 44x44 hit target on icon buttons via hitSlop, since the visual
+// box (34x34) is below the iOS HIG / Material Design minimum tap target.
+function SkeuButton({
+  onPress, disabled, children, style, size = 'large', tone = 'default',
+  accessibilityLabel, accessibilityRole = 'button', accessibilityState,
+}) {
   const { C } = useTheme();
   const isIcon = size === 'icon';
   const subtle = tone === 'subtle';
   const radius = isIcon ? 10 : 12;
   const boxStyle = isIcon ? { width: 34, height: 34 } : { height: 50 };
+  // Pads a 34x34 icon button out to an effective ~46x46 tap target without
+  // changing its visual size.
+  const iconHitSlop = { top: 6, bottom: 6, left: 6, right: 6 };
 
   return (
-    <Pressable onPress={onPress} disabled={disabled} style={[boxStyle, style, disabled && { opacity: 0.5 }]}>
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={[boxStyle, style, disabled && { opacity: 0.5 }]}
+      hitSlop={isIcon ? iconHitSlop : undefined}
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole={accessibilityRole}
+      accessibilityState={{ disabled: !!disabled, ...accessibilityState }}
+    >
       {({ pressed }) => (
         // Shadow lives on this outer, non-clipped view so it isn't cut off
         // by the inner overflow:hidden — this is what was causing the
@@ -358,13 +378,29 @@ function CardTitle({ children }) {
 // ── CollapsibleSection ───────────────────────────────────────────────────
 // A settings-modal section that expands/collapses, so more settings can be
 // added later without the modal turning into one long scroll.
+//
+// Accessibility: the header is exposed as a single accessible "button" with
+// accessibilityState.expanded so VoiceOver/TalkBack announce "expanded" or
+// "collapsed" instead of relying on the visual chevron glyph alone.
 function CollapsibleSection({ title, open, onToggle, children }) {
-  const { s } = useTheme();
+  const { C, s } = useTheme();
   return (
     <View style={s.collapseCard}>
-      <TouchableOpacity style={s.collapseHeader} onPress={onToggle} activeOpacity={0.7}>
+      <TouchableOpacity
+        style={s.collapseHeader}
+        onPress={onToggle}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={title}
+        accessibilityState={{ expanded: open }}
+      >
         <Text style={[s.cardTitle, { marginBottom: 0 }]}>{title}</Text>
-        <Text style={s.collapseChevron}>{open ? '▾' : '▸'}</Text>
+        <Ionicons
+          name={open ? 'chevron-down' : 'chevron-forward'}
+          size={16}
+          color={C.muted}
+          importantForAccessibility="no"
+        />
       </TouchableOpacity>
       {open && <View style={s.collapseBody}>{children}</View>}
     </View>
@@ -381,7 +417,7 @@ function CollapsibleSection({ title, open, onToggle, children }) {
 const BLUR_CLOSE_DELAY_MS = 150;
 
 function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecent, onRemoveRecent, rightSlot, large }) {
-  const { s } = useTheme();
+  const { C, s } = useTheme();
   const [open, setOpen] = useState(false);
   const closeTimer = useRef(null);
 
@@ -422,14 +458,18 @@ function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecen
                 style={{ flex: 1 }}
                 onPress={() => { onSelectRecent(addr); setOpen(false); }}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={`Use recent address: ${addr}`}
               >
                 <Text style={s.recentChipText} numberOfLines={1}>{addr}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => onRemoveRecent(addr)}
-                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${addr} from recent addresses`}
               >
-                <Text style={s.recentChipRemove}>✕</Text>
+                <Ionicons name="close" size={14} color={C.muted} />
               </TouchableOpacity>
             </View>
           ))}
@@ -459,6 +499,9 @@ function UrgencyPicker({ value, onChange }) {
               style={[s.passChip, active && s.passChipActive]}
               onPress={() => onChange(opt.value)}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={`Urgency: ${opt.label}, ${opt.description}`}
+              accessibilityState={{ selected: active }}
             >
               <Text style={[s.passChipText, active && s.passChipTextActive]}>
                 {opt.label}
@@ -481,7 +524,7 @@ function StepPill({ state }) {
   const color  = state === 'running' ? C.blue : state === 'done' ? C.teal : state === 'error' ? C.negRed : C.muted;
   const border = state === 'running' ? C.blueB : state === 'done' ? C.tealB : state === 'error' ? C.negRedB : C.border;
   return (
-    <View style={[s.pill, { borderColor: border }]}>
+    <View style={[s.pill, { borderColor: border }]} accessibilityLabel={`Step status: ${state}`}>
       {state === 'running'
         ? <ActivityIndicator size={10} color={C.blue} />
         : <Text style={[s.pillText, { color }]}>{state}</Text>
@@ -547,7 +590,10 @@ function VerdictCard({ verdict }) {
   if (!verdict.tollRoute) {
     return (
       <View style={[s.verdictCard, { backgroundColor: C.panel, borderColor: C.border2 }]}>
-        <Text style={[s.verdictLabel, { color: C.text }]}>ℹ NO TOLL ROAD USED</Text>
+        <View style={s.verdictLabelRow}>
+          <Ionicons name="information-circle-outline" size={14} color={C.text} importantForAccessibility="no" />
+          <Text style={[s.verdictLabel, { color: C.text }]}>NO TOLL ROAD USED</Text>
+        </View>
         <Text style={s.verdictText}>
           The fastest route to this destination doesn't use a toll road. This
           could mean there's no toll road here at all, or that a toll route
@@ -566,9 +612,17 @@ function VerdictCard({ verdict }) {
   const deltaColor  = delta >= 0 ? C.posGreen : C.negRed;
   return (
     <View style={[s.verdictCard, { backgroundColor: bg, borderColor: border }]}>
-      <Text style={[s.verdictLabel, { color: accentColor }]}>
-        {take ? '✓ TAKE THE TOLL ROAD' : '✕ SKIP THE TOLL'}
-      </Text>
+      <View style={s.verdictLabelRow}>
+        <Ionicons
+          name={take ? 'checkmark-circle-outline' : 'close-circle-outline'}
+          size={14}
+          color={accentColor}
+          importantForAccessibility="no"
+        />
+        <Text style={[s.verdictLabel, { color: accentColor }]}>
+          {take ? 'TAKE THE TOLL ROAD' : 'SKIP THE TOLL'}
+        </Text>
+      </View>
       <Text style={s.verdictText}>{verdict.reason}</Text>
       <View style={s.verdictStats}>
         <View style={s.verdictStat}>
@@ -922,13 +976,23 @@ export default function App() {
         <View style={[s.topbar, s.topbarRow]}>
           <Text style={s.logoText}>TOLL ADVISOR</Text>
           <View style={s.topbarRight}>
-            <SkeuButton size="icon" onPress={() => setSettingsOpen(true)}>
-              <Text style={s.settingsBtnText}>⚙︎</Text>
+            <SkeuButton
+              size="icon"
+              onPress={() => setSettingsOpen(true)}
+              accessibilityLabel="Open settings"
+            >
+              <Ionicons name="settings-outline" size={18} color="#ffffff" />
             </SkeuButton>
           </View>
         </View>
 
-        <TouchableOpacity style={s.configSummary} onPress={() => setSettingsOpen(true)} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={s.configSummary}
+          onPress={() => setSettingsOpen(true)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`Current settings: save ${minTimeSaved || 0} or more minutes, pay up to $${maxToll || 0}, ${(URGENCY_OPTIONS.find(o => o.value === urgencyLevel) ?? URGENCY_OPTIONS[1]).label} urgency. Double tap to edit.`}
+        >
           <Text style={s.configSummaryText}>
             {`Save ${minTimeSaved || 0}+ min · pay up to $${maxToll || 0} · ${(URGENCY_OPTIONS.find(o => o.value === urgencyLevel) ?? URGENCY_OPTIONS[1]).label} urgency`}
           </Text>
@@ -949,8 +1013,14 @@ export default function App() {
                 onSelectRecent={addr => { setLocationText(addr); setLocationMode('manual'); }}
                 onRemoveRecent={removeRecentLocation}
                 rightSlot={
-                  <SkeuButton size="icon" tone="subtle" onPress={detectLocation} style={{ width: 50, height: 50 }}>
-                    <Text style={s.locBtnIcon}>📍</Text>
+                  <SkeuButton
+                    size="icon"
+                    tone="subtle"
+                    onPress={detectLocation}
+                    style={{ width: 50, height: 50 }}
+                    accessibilityLabel="Detect current location"
+                  >
+                    <Ionicons name="location-outline" size={20} color="#ffffff" />
                   </SkeuButton>
                 }
               />
@@ -1035,25 +1105,30 @@ export default function App() {
             )}
 
             {notificationSent && (
-              <View style={s.notifBar}>
+              <View style={s.notifBar} accessibilityLiveRegion="polite">
                 <Text style={s.notifText}>🔔 Advisory notification sent</Text>
               </View>
             )}
 
             {geofenceArmed && (
-              <View style={s.geofenceBar}>
+              <View style={s.geofenceBar} accessibilityLiveRegion="polite">
                 <Text style={s.geofenceText}>📍 Watching for decision point. Notification fires automatically as you approach</Text>
               </View>
             )}
 
             {error ? (
-              <View style={s.errorBar}>
+              <View style={s.errorBar} accessibilityLiveRegion="assertive" accessibilityRole="alert">
                 <Text style={s.errorText}>⚠ {error}</Text>
               </View>
             ) : null}
 
             <View style={s.btnRow}>
-              <SkeuButton onPress={runAnalysis} disabled={analysing} style={{ width: '100%' }}>
+              <SkeuButton
+                onPress={runAnalysis}
+                disabled={analysing}
+                style={{ width: '100%' }}
+                accessibilityLabel={analysing ? 'Analyzing route, please wait' : 'Analyze route'}
+              >
                 {analysing
                   ? <ActivityIndicator color="#ffffff" />
                   : <Text style={s.primaryBtnText}>Analyze Route</Text>
@@ -1074,9 +1149,15 @@ export default function App() {
           <View style={s.modalOverlay}>
             <View style={s.modalPanel}>
               <View style={s.modalHeader}>
-                <Text style={s.modalTitle}>Settings</Text>
-                <TouchableOpacity onPress={() => setSettingsOpen(false)} activeOpacity={0.7}>
-                  <Text style={s.modalClose}>✕</Text>
+                <Text style={s.modalTitle} accessibilityRole="header">Settings</Text>
+                <TouchableOpacity
+                  onPress={() => setSettingsOpen(false)}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close settings"
+                >
+                  <Ionicons name="close" size={18} color={C.muted} />
                 </TouchableOpacity>
               </View>
               <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
@@ -1116,6 +1197,8 @@ export default function App() {
                       trackColor={{ false: '#d1d5db', true: C.blue }}
                       thumbColor="#ffffff"
                       ios_backgroundColor="#d1d5db"
+                      accessibilityLabel="Dark mode"
+                      accessibilityRole="switch"
                     />
                   </View>
                 </CollapsibleSection>
@@ -1226,7 +1309,8 @@ function makeStyles(C) {
     noFreeNote:     { fontSize: 11, color: C.muted, marginTop: 8, fontStyle: 'italic' },
 
     verdictCard:      { borderWidth: 1, borderRadius: 10, padding: 14 },
-    verdictLabel:     { fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
+    verdictLabelRow:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+    verdictLabel:     { fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
     verdictText:      { fontSize: 13, color: C.text, lineHeight: 20, marginBottom: 12 },
     verdictStats:     { flexDirection: 'row', gap: 6 },
     verdictStat:      { flex: 1, alignItems: 'center', backgroundColor: C.black, borderRadius: 8, padding: 10 },
