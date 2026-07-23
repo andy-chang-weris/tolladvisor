@@ -1147,7 +1147,15 @@ export default function App() {
         <Modal
           visible={settingsOpen}
           animationType="slide"
-          transparent
+          // presentationStyle is iOS-only and only takes effect when
+          // transparent={false} — with transparent=true (needed for our
+          // custom dimmed overlay look), iOS silently ignores it and falls
+          // back to overFullScreen. So we only go non-transparent+pageSheet
+          // on iOS; Android keeps its existing transparent slide-up overlay
+          // exactly as before (this change is a no-op there).
+          // NOTE: implemented per Apple/RN docs, not yet visually verified
+          transparent={Platform.OS !== 'ios'}
+          presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : undefined}
           onRequestClose={() => setSettingsOpen(false)}
         >
           <View style={s.modalOverlay}>
