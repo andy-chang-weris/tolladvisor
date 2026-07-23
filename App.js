@@ -462,7 +462,17 @@ function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecen
         {rightSlot}
       </View>
       {showRecents && (
-        <View style={s.recentsWrap}>
+        <View
+          style={s.recentsWrap}
+          // This list appears the moment the field gains focus, with no
+          // other visual/audio cue. accessibilityLiveRegion="polite" makes
+          // VoiceOver/TalkBack announce that content just appeared instead
+          // of silently changing what's on screen; "polite" (rather than
+          // "assertive") waits for the user's current speech to finish
+          // instead of interrupting mid-sentence.
+          accessibilityLiveRegion="polite"
+          accessibilityLabel={`${recents.length} recent address${recents.length === 1 ? '' : 'es'} available`}
+        >
           <Text style={s.recentsLabel}>Recent</Text>
           {recents.map((addr, i) => (
             <View key={i} style={s.recentChip}>
@@ -1169,7 +1179,11 @@ export default function App() {
           onRequestClose={() => setSettingsOpen(false)}
         >
           <View style={s.modalOverlay}>
-            <View style={s.modalPanel}>
+            {/* accessibilityViewIsModal tells VoiceOver/TalkBack to trap
+                screen-reader focus inside this subtree while the settings
+                sheet is open, instead of letting a swipe navigate into the
+                (visually hidden but still-mounted) content behind it. */}
+            <View style={s.modalPanel} accessibilityViewIsModal={true}>
               <View style={s.modalHeader}>
                 <Text style={s.modalTitle} accessibilityRole="header">Settings</Text>
                 <TouchableOpacity
