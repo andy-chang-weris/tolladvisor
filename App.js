@@ -249,7 +249,7 @@ function Label({ children, large, style }) {
   return <Text style={[s.label, large && s.labelLarge, style]}>{children}</Text>;
 }
 
-function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboardType, editable = true, onFocus, onBlur, large }) {
+function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboardType, editable = true, onFocus, onBlur, large, label }) {
   const { C, s } = useTheme();
   const [focused, setFocused] = useState(false);
   return (
@@ -271,6 +271,14 @@ function FieldInput({ value, onChangeText, placeholder, secureTextEntry, keyboar
       editable={editable}
       multiline={false}
       textAlignVertical="center"
+      // accessibilityLabel is a real, persistent label independent of the
+      // visible placeholder (which some screen readers announce, but which
+      // disappears the moment the user types — leaving the field unlabeled
+      // at exactly the point someone would want to confirm what they're
+      // editing). It's set from the same text as the on-screen <Label>
+      // rather than the placeholder, since the placeholder is example text
+      // ("10", "50000"), not a field name.
+      accessibilityLabel={label}
       // NOTE: numberOfLines is only meaningful when multiline=true — on
       // react-native-web, passing it alongside multiline={false} can flip
       // the underlying DOM node to a <textarea> on some reconciliations
@@ -419,7 +427,7 @@ function CollapsibleSection({ title, open, onToggle, children }) {
 // on some devices cancels the tap entirely.
 const BLUR_CLOSE_DELAY_MS = 150;
 
-function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecent, onRemoveRecent, rightSlot, large }) {
+function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecent, onRemoveRecent, rightSlot, large, label }) {
   const { C, s } = useTheme();
   const [open, setOpen] = useState(false);
   const closeTimer = useRef(null);
@@ -448,6 +456,7 @@ function AddressInput({ value, onChangeText, placeholder, recents, onSelectRecen
             onFocus={handleFocus}
             onBlur={handleBlur}
             large={large}
+            label={label}
           />
         </View>
         {rightSlot}
@@ -1010,6 +1019,7 @@ export default function App() {
               <Label large style={{ marginTop: 0 }}>Starting Location</Label>
               <AddressInput
                 large
+                label="Starting location"
                 value={locationText}
                 onChangeText={t => { setLocationText(t); setLocationMode('manual'); }}
                 placeholder='Enter starting location'
@@ -1031,6 +1041,7 @@ export default function App() {
               <Label large>Destination</Label>
               <AddressInput
                 large
+                label="Destination"
                 value={destination}
                 onChangeText={setDestination}
                 placeholder='Enter destination'
@@ -1153,7 +1164,6 @@ export default function App() {
           // back to overFullScreen. So we only go non-transparent+pageSheet
           // on iOS; Android keeps its existing transparent slide-up overlay
           // exactly as before (this change is a no-op there).
-          // NOTE: implemented per Apple/RN docs, not yet visually verified
           transparent={Platform.OS !== 'ios'}
           presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : undefined}
           onRequestClose={() => setSettingsOpen(false)}
@@ -1180,15 +1190,15 @@ export default function App() {
                 >
                   <Label style={{ marginTop: 0 }}>Minimum time saved to take the toll</Label>
                   <Text style={s.hint}>Only recommend the toll road if it saves at least this many minutes</Text>
-                  <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" />
+                  <FieldInput value={minTimeSaved} onChangeText={setMinTimeSaved} keyboardType="numeric" placeholder="10" label="Minimum time saved to take the toll, in minutes" />
 
                   <Label>Most you're willing to pay in tolls</Label>
                   <Text style={s.hint}>Won't recommend a toll that costs more than this</Text>
-                  <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="10" />
+                  <FieldInput value={maxToll} onChangeText={setMaxToll} keyboardType="numeric" placeholder="10" label="Most you're willing to pay in tolls, in dollars" />
 
                   <Label>Your annual salary</Label>
                   <Text style={s.hint}>Used to estimate what your time is worth per minute</Text>
-                  <FieldInput value={annualSalary} onChangeText={setAnnualSalary} keyboardType="numeric" placeholder="50000" />
+                  <FieldInput value={annualSalary} onChangeText={setAnnualSalary} keyboardType="numeric" placeholder="50000" label="Your annual salary, in dollars" />
 
                   <View style={s.divider} />
                   <UrgencyPicker value={urgencyLevel} onChange={setUrgencyLevel} />
