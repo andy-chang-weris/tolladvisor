@@ -3,6 +3,7 @@ import {
   StyleSheet, Text, View, TextInput, TouchableOpacity,
   ScrollView, ActivityIndicator, SafeAreaView, Platform,
   StatusBar, KeyboardAvoidingView, Modal, Switch, Pressable,
+  useColorScheme,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -705,7 +706,13 @@ export default function App() {
   const [settingsOpen,     setSettingsOpen]     = useState(false);
   const [configSectionOpen,    setConfigSectionOpen]    = useState(true);
   const [interfaceSectionOpen, setInterfaceSectionOpen] = useState(false);
-  const [theme,            setTheme]            = useState('dark');
+  // Defaults to the OS's current appearance on first launch (per iOS HIG /
+  // Material Design expectations), rather than hardcoding 'dark'. Once a
+  // saved preference is found in loadSettings() below, or the user
+  // manually toggles the switch, that explicit choice always wins over
+  // the system setting from then on.
+  const systemScheme = useColorScheme();
+  const [theme,            setTheme]            = useState(systemScheme === 'light' ? 'light' : 'dark');
   const [hydrated,         setHydrated]          = useState(false);
   const [recentLocations,    setRecentLocations]    = useState([]);
   const [recentDestinations, setRecentDestinations] = useState([]);
