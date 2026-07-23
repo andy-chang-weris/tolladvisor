@@ -78,6 +78,17 @@ const COLORS = {
     // skeuomorphic "physical button" treatment (lighter top → darker
     // bottom → darkest shadow edge).
     blue:       '#426480',
+    // blueText: the brand blue (#426480) was designed as a button-fill
+    // color (dark background + white text on top), not as a text color.
+    // Used directly as small text on dark backgrounds it fails WCAG AA
+    // contrast — verified: 2.35–2.98:1 across routeType/notifText/
+    // geofenceText/passChipActive/configSummaryEdit, vs. the 4.5:1 minimum
+    // for normal text. blueText is a lighter blue reserved for exactly
+    // those small-text spots, verified to clear 4.5:1 even in the worst
+    // case (blue text on the blueD tint over the panel background: 4.73:1).
+    // Not needed in the light theme below — the base blue already clears
+    // 4.5:1 there (5.4–6.2:1 across the same spots).
+    blueText:   '#7097b2',
     blueLight:  '#5c85a5',
     blueTop:    '#5e87a8',
     blueBase:   '#426480',
@@ -107,6 +118,7 @@ const COLORS = {
     muted:   '#666b74',
 
     blue:       '#426480',
+    blueText:   '#426480', // base blue already passes 4.5:1+ in light theme
     blueLight:  '#5c85a5',
     blueTop:    '#6690b0',
     blueBase:   '#426480',
@@ -544,12 +556,12 @@ function UrgencyPicker({ value, onChange }) {
 
 function StepPill({ state }) {
   const { C, s } = useTheme();
-  const color  = state === 'running' ? C.blue : state === 'done' ? C.teal : state === 'error' ? C.negRed : C.muted;
+  const color  = state === 'running' ? C.blueText : state === 'done' ? C.teal : state === 'error' ? C.negRed : C.muted;
   const border = state === 'running' ? C.blueB : state === 'done' ? C.tealB : state === 'error' ? C.negRedB : C.border;
   return (
     <View style={[s.pill, { borderColor: border }]} accessibilityLabel={`Step status: ${state}`}>
       {state === 'running'
-        ? <ActivityIndicator size={10} color={C.blue} />
+        ? <ActivityIndicator size={10} color={C.blueText} />
         : <Text style={[s.pillText, { color }]}>{state}</Text>
       }
     </View>
@@ -586,7 +598,7 @@ function RouteCard({ route, isToll, isAlt }) {
   // Toll routes get the blue accent; free routes stay neutral/grayscale.
   const bg        = isToll ? C.blueD : C.panel;
   const border    = isToll ? C.blueB : C.border2;
-  const typeColor = isToll ? C.blue : C.muted;
+  const typeColor = isToll ? C.blueText : C.muted;
   return (
     <View style={[s.routeCard, { backgroundColor: bg, borderColor: border }]}>
       <Text style={[s.routeType, { color: typeColor }]}>{label}</Text>
@@ -1259,7 +1271,7 @@ function makeStyles(C) {
 
     configSummary:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: C.dark, paddingHorizontal: 20, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border },
     configSummaryText: { fontSize: 12, color: C.muted, flex: 1, marginRight: 8 },
-    configSummaryEdit: { fontSize: 12, color: C.blue, fontWeight: '600' },
+    configSummaryEdit: { fontSize: 12, color: C.blueText, fontWeight: '600' },
 
     modalOverlay:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     modalPanel:     { backgroundColor: C.dark, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
@@ -1309,7 +1321,7 @@ function makeStyles(C) {
     passChip:       { borderWidth: 1, borderColor: C.border2, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 10, minHeight: 40, justifyContent: 'center' },
     passChipActive: { borderColor: C.blue, backgroundColor: C.blueD },
     passChipText:   { fontSize: 12, color: C.muted },
-    passChipTextActive: { color: C.blue, fontWeight: '600' },
+    passChipTextActive: { color: C.blueText, fontWeight: '600' },
     passChipSub:    { fontSize: 11, marginTop: 2 },
 
     sectionLabel:   { fontSize: 12, color: C.muted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
@@ -1355,10 +1367,10 @@ function makeStyles(C) {
     verdictStatLabel: { fontSize: 11, color: C.muted, letterSpacing: 1 },
 
     notifBar:       { backgroundColor: C.blueD, borderWidth: 1, borderColor: C.blueB, borderRadius: 8, padding: 12, marginTop: 12 },
-    notifText:      { fontSize: 13, color: C.blue, textAlign: 'center' },
+    notifText:      { fontSize: 13, color: C.blueText, textAlign: 'center' },
 
     geofenceBar:    { backgroundColor: C.blueD, borderWidth: 1, borderColor: C.blueB, borderRadius: 8, padding: 12, marginTop: 8 },
-    geofenceText:   { fontSize: 13, color: C.blue, textAlign: 'center' },
+    geofenceText:   { fontSize: 13, color: C.blueText, textAlign: 'center' },
 
     errorBar:       { backgroundColor: C.negRedD, borderWidth: 1, borderColor: C.negRedB, borderRadius: 8, padding: 12, marginTop: 12 },
     errorText:      { fontSize: 13, color: C.negRed },
