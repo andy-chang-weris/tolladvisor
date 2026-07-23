@@ -326,7 +326,7 @@ function SkeuButton({
   // to reach a usable target. Making the box itself 44x44 means the
   // pressable, visible surface, and shadow all agree, instead of hitSlop
   // silently extending an invisible tap zone around a smaller visual.
-  const boxStyle = isIcon ? { width: 44, height: 44 } : { height: 50 };
+  const boxStyle = isIcon ? { width: 44, height: 44 } : { minHeight: 50 };
   const iconHitSlop = { top: 4, bottom: 4, left: 4, right: 4 };
 
   return (
@@ -574,7 +574,9 @@ function StepCard({ num, title, state, children }) {
   return (
     <View style={[s.step, { borderColor }]}>
       <View style={s.stepRow}>
-        <View style={s.stepIcon}><Text style={s.stepIconText}>{String(num).padStart(2, '0')}</Text></View>
+        <View style={s.stepIcon}>
+          <Text style={s.stepIconText} maxFontSizeMultiplier={1.3}>{String(num).padStart(2, '0')}</Text>
+        </View>
         <Text style={s.stepTitle}>{title}</Text>
         <StepPill state={state} />
       </View>
@@ -1294,8 +1296,8 @@ function makeStyles(C) {
     label:          { fontSize: 12, color: C.muted, marginBottom: 4, marginTop: 10, letterSpacing: 0.5 },
     labelLarge:     { fontSize: 14, marginTop: 12 },
     hint:           { fontSize: 12, color: C.muted, opacity: 0.7, marginBottom: 6, lineHeight: 16 },
-    input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, height: 44 },
-    inputLarge:     { fontSize: 17, paddingVertical: 14, fontWeight: '500', height: 50 },
+    input:          { backgroundColor: C.black, borderWidth: 1, borderColor: C.border, borderRadius: 8, color: C.text, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, minHeight: 44 },
+    inputLarge:     { fontSize: 17, paddingVertical: 14, fontWeight: '500', minHeight: 50 },
     inputFocused:   { borderColor: C.blueB },
     inputDisabled:  { opacity: 0.5 },
 
