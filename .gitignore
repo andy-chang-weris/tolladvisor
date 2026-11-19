@@ -40,6 +40,3 @@ yarn-error.*
 # generated native folders
 /ios
 /android
-
-# test
-__tests__/

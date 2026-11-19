@@ -25,7 +25,9 @@ const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_API_KEY ?? '';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    // shouldShowAlert is deprecated; banner + list is its replacement.
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
@@ -33,16 +35,41 @@ Notifications.setNotificationHandler({
 
 const GEOFENCE_TASK = 'TOLL_DECISION_POINT';
 
+// Trip details the geofence task needs to re-run the verdict. Kept in memory
+// for speed, and also saved to AsyncStorage: if the OS kills the app during
+// the drive, the geofence still fires and relaunches the JS bundle in the
+// background, but this in-memory copy starts out null again.
+const TRIP_CONTEXT_KEY = 'tripContext';
 let _tripContext = null;
+
+async function saveTripContext(ctx) {
+  _tripContext = ctx;
+  try { await AsyncStorage.setItem(TRIP_CONTEXT_KEY, JSON.stringify(ctx)); } catch {}
+}
+
+async function clearTripContext() {
+  _tripContext = null;
+  try { await AsyncStorage.removeItem(TRIP_CONTEXT_KEY); } catch {}
+}
+
+async function loadTripContext() {
+  if (_tripContext) return _tripContext;
+  try {
+    const saved = await AsyncStorage.getItem(TRIP_CONTEXT_KEY);
+    if (saved) _tripContext = JSON.parse(saved);
+  } catch {}
+  return _tripContext;
+}
 
 TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => {
   if (error) { console.warn('Geofence task error:', error.message); return; }
   if (!data) return;
   const { eventType } = data;
   if (eventType !== Location.GeofencingEventType.Enter) return;
-  if (!_tripContext) return;
+  const ctx = await loadTripContext();
+  if (!ctx) return;
 
-  const { destination, minTimeSaved, maxToll, annualSalary, urgencyLevel } = _tripContext;
+  const { destination, minTimeSaved, maxToll, annualSalary, urgencyLevel } = ctx;
   try {
     const pos      = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
     const routes   = await getRoutes(pos.coords.latitude, pos.coords.longitude, destination, GOOGLE_API_KEY);
@@ -865,7 +892,7 @@ export default function App() {
     setNotificationSent(false);
     setGeofenceArmed(false);
     setError('');
-    _tripContext = null;
+    clearTripContext();
     Location.stopGeofencingAsync(GEOFENCE_TASK).catch(() => {});
   }
 
@@ -966,12 +993,6 @@ export default function App() {
     const sent = await sendVerdictNotification(v, destination);
     setNotificationSent(sent);
 
-    _tripContext = {
-      destination,
-      minTimeSaved: minTimeSavedNum, maxToll: maxTollNum,
-      annualSalary: annualSalaryNum, urgencyLevel,
-    };
-
     try {
       // The decision-point notification only makes sense when there's an
       // actual choice to make (toll vs. free). If there's no toll route at
@@ -981,6 +1002,13 @@ export default function App() {
         setAnalysing(false);
         return;
       }
+
+      // Saved before arming the geofence, so the task can always find it.
+      await saveTripContext({
+        destination,
+        minTimeSaved: minTimeSavedNum, maxToll: maxTollNum,
+        annualSalary: annualSalaryNum, urgencyLevel,
+      });
 
       const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
       if (bgStatus === 'granted') {
