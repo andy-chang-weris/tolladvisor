@@ -10,10 +10,6 @@ import {
   getDecisionPoint,
 } from '../src/tollLogic';
 
-// ── Helpers ──────────────────────────────────────────────────────────────
-
-// Builds a route shaped like a Google Routes API response.
-// toll: dollar amount, or undefined for a toll-free route.
 function route(durationSec, toll, extra = {}) {
   const travelAdvisory = toll === undefined
     ? {}
@@ -29,7 +25,6 @@ function route(durationSec, toll, extra = {}) {
   return { duration: `${durationSec}s`, travelAdvisory, ...extra };
 }
 
-// Standard Google encoded-polyline encoder (inverse of decodePolyline).
 function encodeValue(v) {
   v = v < 0 ? ~(v << 1) : v << 1;
   let s = '';
@@ -54,7 +49,6 @@ function encodePolyline(points) {
   return out;
 }
 
-// n points heading due north from (0,0), 0.001° apart (~111 m each).
 function northLine(n) {
   return Array.from({ length: n }, (_, i) => ({ latitude: i * 0.001, longitude: 0 }));
 }
@@ -65,8 +59,6 @@ function step(pt, maneuver, instructions = '') {
     navigationInstruction: { maneuver, instructions },
   };
 }
-
-// ── Time value ───────────────────────────────────────────────────────────
 
 describe('urgencyWeight', () => {
   it('maps each urgency level to its weight', () => {
@@ -82,7 +74,6 @@ describe('urgencyWeight', () => {
 });
 
 describe('valueOfTimeSaved', () => {
-  // $100k / 2000 h = $50/h, × 0.5 = $25/h at medium urgency.
   it('values an hour at half the hourly wage at medium urgency', () => {
     expect(valueOfTimeSaved(60, 100000, 'med')).toBeCloseTo(25);
   });
@@ -105,8 +96,6 @@ describe('valueOfTimeSaved', () => {
     expect(valueOfTimeSaved(60, '100000', 'med')).toBeCloseTo(25);
   });
 });
-
-// ── Formatting & route helpers ───────────────────────────────────────────
 
 describe('fmtDuration', () => {
   it('shows minutes under an hour', () => {
@@ -140,7 +129,6 @@ describe('getTollCost / routeHasToll', () => {
     expect(routeHasToll(route(100, 2))).toBe(true);
   });
 
-  // Google returns an empty tollInfo when a route has no known toll price.
   it('treats an empty tollInfo as no toll', () => {
     const r = { duration: '100s', travelAdvisory: { tollInfo: {} } };
     expect(getTollCost(r)).toBe(0);
@@ -173,10 +161,7 @@ describe('selectRoutes', () => {
   });
 });
 
-// ── Verdict ──────────────────────────────────────────────────────────────
-
 describe('calculateVerdict: toll vs free', () => {
-  // Defaults: min 10 min saved, max $10 toll, $100k salary, medium urgency.
   function verdict(tollRoute, freeRoute, { min = 10, max = 10, salary = 100000, urgency = 'med' } = {}) {
     return calculateVerdict(
       { tollRoute, freeRoute, tollRoutes: tollRoute ? [tollRoute] : [], freeRoutes: freeRoute ? [freeRoute] : [] },
@@ -210,7 +195,6 @@ describe('calculateVerdict: toll vs free', () => {
     expect(v.reason).toMatch(/hard limit/);
   });
 
-  // $20k salary → $5/h → 30 min is worth $2.50, less than a $5 toll.
   it('skips when the toll costs more than the time is worth', () => {
     const v = verdict(route(1800, 5), route(3600), { salary: 20000 });
     expect(v.recommendation).toBe('SKIP_TOLL');
@@ -218,8 +202,6 @@ describe('calculateVerdict: toll vs free', () => {
     expect(v.reason).toMatch(/more than the 30 min saved is worth/);
   });
 
-  // $200k salary → $50/h → 5 min is worth $4.17, above a $2 toll,
-  // but 5 min is under the 10-min threshold.
   it('skips when time saved is under the minimum', () => {
     const v = verdict(route(1800, 2), route(2100), { salary: 200000 });
     expect(v.recommendation).toBe('SKIP_TOLL');
@@ -227,7 +209,6 @@ describe('calculateVerdict: toll vs free', () => {
     expect(v.reason).toMatch(/below your 10-min threshold/);
   });
 
-  // $100k → $25/h → 30 min is worth $12.50, more than a $5 toll.
   it('takes the toll when it passes every check', () => {
     const toll = route(1800, 5);
     const v = verdict(toll, route(3600));
@@ -244,7 +225,6 @@ describe('calculateVerdict: toll vs free', () => {
     expect(v.recommendation).toBe('TAKE_TOLL');
   });
 
-  // 30 min at $100k: low urgency is worth $6.25, medium $12.50; toll is $8.
   it('lets urgency flip the decision', () => {
     expect(verdict(route(1800, 8), route(3600), { urgency: 'low' }).recommendation).toBe('SKIP_TOLL');
     expect(verdict(route(1800, 8), route(3600), { urgency: 'med' }).recommendation).toBe('TAKE_TOLL');
@@ -294,10 +274,7 @@ describe('calculateVerdict: every route has a toll', () => {
   });
 });
 
-// ── Polyline ─────────────────────────────────────────────────────────────
-
 describe('decodePolyline', () => {
-  // The worked example from Google's encoded polyline documentation.
   it("decodes Google's documented example", () => {
     const pts = decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@');
     expect(pts).toHaveLength(3);
@@ -323,10 +300,7 @@ describe('decodePolyline', () => {
   });
 });
 
-// ── Decision point ───────────────────────────────────────────────────────
-
 describe('getDecisionPoint', () => {
-  // 0.001° of latitude ≈ 111.195 m, so 800 m back ≈ 0.0071946°.
   const BACK_800M = 0.0071946;
 
   function tollRouteWithEntry(pts, entryIdx, prevManeuver) {
@@ -346,7 +320,6 @@ describe('getDecisionPoint', () => {
     const pts = northLine(20);
     const toll = tollRouteWithEntry(pts, 16, 'RAMP_RIGHT');
     const p = getDecisionPoint(toll, null, 9, 9);
-    // Anchored on the ramp step at point 15 (lat 0.015).
     expect(p.latitude).toBeCloseTo(0.015 - BACK_800M, 4);
     expect(p.longitude).toBeCloseTo(0, 5);
   });
@@ -367,7 +340,6 @@ describe('getDecisionPoint', () => {
   });
 
   it('falls back to where the toll and free routes split', () => {
-    // Both head north for 10 points, then toll turns east and free turns west.
     const shared = northLine(10);
     const tollPts = [...shared, { latitude: 0.009, longitude: 0.001 }, { latitude: 0.009, longitude: 0.002 }];
     const freePts = [...shared, { latitude: 0.009, longitude: -0.001 }, { latitude: 0.009, longitude: -0.002 }];

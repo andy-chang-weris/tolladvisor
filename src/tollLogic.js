@@ -1,5 +1,3 @@
-// src/tollLogic.js
-
 export const URGENCY_OPTIONS = [
   { label: 'Low', value: 'low', weight: 0.5, description: "I've got time to spare" },
   { label: 'Medium', value: 'med', weight: 1.0, description: 'Normal trip, no rush' },
@@ -21,7 +19,6 @@ export function valueOfTimeSaved(timeSavedMin, annualSalary, urgencyLevel) {
 }
 
 export function fmtDuration(sec) {
-  // Round to whole minutes first, so 1h 59m 30s becomes "2h 0m", not "1h 60m".
   const totalMin = Math.round(sec / 60);
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
@@ -252,9 +249,6 @@ function haversineMetres(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Finds the index of the first step whose instructions mark it as entering
-// a toll road (Google embeds a "Toll road" line in navigationInstruction.instructions
-// for the step where tolling begins). Returns -1 if no such step exists.
 function findTollEntryStepIndex(route) {
   const steps = route?.legs?.[0]?.steps ?? [];
   for (let i = 0; i < steps.length; i++) {
@@ -264,14 +258,6 @@ function findTollEntryStepIndex(route) {
   return -1;
 }
 
-// Maneuver types that represent an actual physical decision (turn/ramp/merge/fork),
-// as opposed to just continuing straight on the same road.
-// Confirmed against real Google Routes API responses on 2026-07-16 (two routes,
-// VA-267 E corridor): DEPART, TURN_LEFT, TURN_RIGHT, STRAIGHT, RAMP_RIGHT, MERGE,
-// NAME_CHANGE, and ROUNDABOUT_RIGHT all appeared and classified correctly by this
-// set. Only two routes tested so far, so an unseen maneuver value on a different
-// route is still possible; revisit this set if debug logging on a future route
-// ever prints a maneuver string not covered here.
 const RAMP_MANEUVER_TYPES = new Set([
   'RAMP_LEFT', 'RAMP_RIGHT',
   'TURN_LEFT', 'TURN_RIGHT', 'TURN_SLIGHT_LEFT', 'TURN_SLIGHT_RIGHT',
@@ -286,15 +272,8 @@ function isRampOrTurnStep(step) {
   return RAMP_MANEUVER_TYPES.has(maneuver);
 }
 
-// Fixed lead distance, in metres, to back off from the actual ramp/turn
-// before firing the alert. Distance-based rather than step-based, since
-// turn-by-turn steps vary wildly in length (a highway "continue straight"
-// step can be miles long, a local turn a few hundred feet), so counting
-// steps back is not a reliable proxy for how much reaction distance the
-// driver actually gets.
-const DECISION_POINT_LEAD_METRES = 800; // ~0.5 mile
+const DECISION_POINT_LEAD_METRES = 800;
 
-// Index of the polyline point nearest a given lat/lng.
 function nearestPolylineIndex(pts, lat, lng) {
   let bestIdx = 0;
   let bestDist = Infinity;
@@ -305,9 +284,6 @@ function nearestPolylineIndex(pts, lat, lng) {
   return bestIdx;
 }
 
-// Linear interpolation between two lat/lng points, at fraction t (0 = a, 1 = b).
-// Fine for short segments (a few hundred metres) where the earth's curvature
-// is negligible; not meant for long-distance interpolation.
 function interpolatePoint(a, b, t) {
   return {
     latitude:  a.latitude  + (b.latitude  - a.latitude)  * t,
@@ -315,11 +291,6 @@ function interpolatePoint(a, b, t) {
   };
 }
 
-// Walk backward along the polyline from targetIdx, accumulating real
-// point-to-point distance, and interpolate the exact point once leadMetres
-// is reached (rather than snapping to whichever polyline point happens to
-// be nearby, which can overshoot badly on long straight stretches with
-// sparse points).
 function walkBackByDistance(pts, targetIdx, leadMetres) {
   let accumulated = 0;
   let idx = targetIdx;

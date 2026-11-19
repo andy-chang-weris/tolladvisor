@@ -1,0 +1,58 @@
+export const COLORS = {
+  dark: {
+    black:   '#0a0a0a',
+    dark:    '#111318',
+    panel:   '#181c24',
+    border:  'rgba(255,255,255,0.07)',
+    border2: 'rgba(255,255,255,0.12)',
+    text:    '#f2f3f5',
+    muted:   '#8a8f98',
+
+    blue:       '#426480',
+    blueText:   '#7097b2',
+    blueLight:  '#5c85a5',
+    blueTop:    '#5e87a8',
+    blueBase:   '#426480',
+    blueBottom: '#31506a',
+    blueEdge:   '#22394c',
+    blueD:      'rgba(66,100,128,0.18)',
+    blueB:      'rgba(66,100,128,0.45)',
+
+    teal:    '#6bc9cb',
+    tealD:   'rgba(107,201,203,0.14)',
+    tealB:   'rgba(107,201,203,0.32)',
+
+    posGreen: '#22c55e',
+    negRed:   '#ef4444',
+    negRedD:  'rgba(239,68,68,0.10)',
+    negRedB:  'rgba(239,68,68,0.30)',
+  },
+  light: {
+    black:   '#f4f5f7',
+    dark:    '#ffffff',
+    panel:   '#ffffff',
+    border:  'rgba(0,0,0,0.08)',
+    border2: 'rgba(0,0,0,0.16)',
+    text:    '#111318',
+    muted:   '#666b74',
+
+    blue:       '#426480',
+    blueText:   '#426480',
+    blueLight:  '#5c85a5',
+    blueTop:    '#6690b0',
+    blueBase:   '#426480',
+    blueBottom: '#324e64',
+    blueEdge:   '#233848',
+    blueD:      'rgba(66,100,128,0.10)',
+    blueB:      'rgba(66,100,128,0.35)',
+
+    teal:    '#3f9b9d',
+    tealD:   'rgba(107,201,203,0.16)',
+    tealB:   'rgba(63,155,157,0.30)',
+
+    posGreen: '#16a34a',
+    negRed:   '#dc2626',
+    negRedD:  'rgba(220,38,38,0.08)',
+    negRedB:  'rgba(220,38,38,0.28)',
+  },
+};
