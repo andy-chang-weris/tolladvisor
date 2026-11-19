@@ -21,8 +21,10 @@ export function valueOfTimeSaved(timeSavedMin, annualSalary, urgencyLevel) {
 }
 
 export function fmtDuration(sec) {
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
+  // Round to whole minutes first, so 1h 59m 30s becomes "2h 0m", not "1h 60m".
+  const totalMin = Math.round(sec / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
   return h > 0 ? `${h}h ${m}m` : `${m} min`;
 }
 
